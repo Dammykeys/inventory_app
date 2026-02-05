@@ -1,3 +1,4 @@
 Flask==2.3.3
 Werkzeug==2.3.7
 fpdf==1.7.2
+psycopg2-binary

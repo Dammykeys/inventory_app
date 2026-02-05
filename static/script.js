@@ -934,7 +934,7 @@ document.getElementById('addItemBtn').addEventListener('click', () => {
         <div class="form-row">
             <div class="form-group">
                 <label>Item Name <span class="required">*</span></label>
-                <input type="text" class="item-name" placeholder="Item name" list="itemSuggestions" focus required>
+                <input type="text" class="item-name" placeholder="Item name" list="itemSuggestions" required>
             </div>
             <div class="form-group">
                 <label>Quantity <span class="required">*</span></label>

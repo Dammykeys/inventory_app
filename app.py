@@ -5,33 +5,103 @@ import os
 from fpdf import FPDF
 from pathlib import Path
 
+# app = Flask(__name__)
+# app.config['DATABASE'] = 'inventory.db'
+
+
+
+import psycopg2
+from psycopg2.extras import RealDictCursor # Allows us to access rows like dictionaries
+# from flask import Flask, render_template, request, jsonify, send_file
+
 app = Flask(__name__)
-app.config['DATABASE'] = 'inventory.db'
 
 # --- DATABASE SETUP ---
+def get_db_connection():
+    # Vercel automatically provides the POSTGRES_URL environment variable 
+    # once you connect the Postgres storage to your project
+    conn = psycopg2.connect(os.environ.get('POSTGRES_URL'))
+    return conn
+
 def init_db():
-    conn = sqlite3.connect(app.config['DATABASE'])
+    conn = get_db_connection()
     cursor = conn.cursor()
+    
+    # Postgres uses 'SERIAL' instead of 'INTEGER PRIMARY KEY AUTOINCREMENT'
     cursor.execute('''CREATE TABLE IF NOT EXISTS products 
-                      (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, quantity INTEGER, reorder_level INTEGER, price REAL DEFAULT 0, brand TEXT)''')
+                      (id SERIAL PRIMARY KEY, 
+                       name TEXT UNIQUE, 
+                       quantity INTEGER, 
+                       reorder_level INTEGER, 
+                       price REAL DEFAULT 0, 
+                       brand TEXT)''')
+    
     cursor.execute('''CREATE TABLE IF NOT EXISTS transactions 
-                      (id INTEGER PRIMARY KEY AUTOINCREMENT, item_name TEXT, quantity INTEGER, 
-                       type TEXT, date TEXT, time TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS invoices 
-                      (invoice_num TEXT PRIMARY KEY, date TEXT, customer TEXT, total_items INTEGER)''')
+                      (id SERIAL PRIMARY KEY, 
+                       item_name TEXT, 
+                       quantity INTEGER, 
+                       type TEXT, 
+                       date TEXT, 
+                       time TEXT)''')
+    
     cursor.execute('''CREATE TABLE IF NOT EXISTS sales 
-                      (id INTEGER PRIMARY KEY AUTOINCREMENT, sale_num TEXT UNIQUE, customer TEXT, 
-                       date TEXT, time TEXT, total_amount REAL, payment_status TEXT)''')
+                      (id SERIAL PRIMARY KEY, 
+                       sale_num TEXT UNIQUE, 
+                       customer TEXT, 
+                       date TEXT, 
+                       time TEXT, 
+                       total_amount REAL, 
+                       payment_status TEXT)''')
+    
     cursor.execute('''CREATE TABLE IF NOT EXISTS sale_items 
-                      (id INTEGER PRIMARY KEY AUTOINCREMENT, sale_num TEXT, item_name TEXT, 
-                       quantity INTEGER, price REAL, total REAL, FOREIGN KEY(sale_num) REFERENCES sales(sale_num))''')
+                      (id SERIAL PRIMARY KEY, 
+                       sale_num TEXT, 
+                       item_name TEXT, 
+                       quantity INTEGER, 
+                       price REAL, 
+                       total REAL)''')
+
     cursor.execute('''CREATE TABLE IF NOT EXISTS expenses 
-                      (id INTEGER PRIMARY KEY AUTOINCREMENT, description TEXT, category TEXT, 
-                       amount REAL, date TEXT, time TEXT, notes TEXT)''')
+                      (id SERIAL PRIMARY KEY, 
+                       description TEXT, 
+                       category TEXT, 
+                       amount REAL, 
+                       date TEXT, 
+                       time TEXT, 
+                       notes TEXT)''')
+    
     conn.commit()
+    cursor.close()
     conn.close()
 
+# Run init_db once
 init_db()
+
+
+# # --- DATABASE SETUP ---
+# def init_db():
+#     conn = sqlite3.connect(app.config['DATABASE'])
+#     cursor = conn.cursor()
+#     cursor.execute('''CREATE TABLE IF NOT EXISTS products 
+#                       (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, quantity INTEGER, reorder_level INTEGER, price REAL DEFAULT 0, brand TEXT)''')
+#     cursor.execute('''CREATE TABLE IF NOT EXISTS transactions 
+#                       (id INTEGER PRIMARY KEY AUTOINCREMENT, item_name TEXT, quantity INTEGER, 
+#                        type TEXT, date TEXT, time TEXT)''')
+#     cursor.execute('''CREATE TABLE IF NOT EXISTS invoices 
+#                       (invoice_num TEXT PRIMARY KEY, date TEXT, customer TEXT, total_items INTEGER)''')
+#     cursor.execute('''CREATE TABLE IF NOT EXISTS sales 
+#                       (id INTEGER PRIMARY KEY AUTOINCREMENT, sale_num TEXT UNIQUE, customer TEXT, 
+#                        date TEXT, time TEXT, total_amount REAL, payment_status TEXT)''')
+#     cursor.execute('''CREATE TABLE IF NOT EXISTS sale_items 
+#                       (id INTEGER PRIMARY KEY AUTOINCREMENT, sale_num TEXT, item_name TEXT, 
+#                        quantity INTEGER, price REAL, total REAL, FOREIGN KEY(sale_num) REFERENCES sales(sale_num))''')
+#     cursor.execute('''CREATE TABLE IF NOT EXISTS expenses 
+#                       (id INTEGER PRIMARY KEY AUTOINCREMENT, description TEXT, category TEXT, 
+#                        amount REAL, date TEXT, time TEXT, notes TEXT)''')
+#     conn.commit()
+#     conn.close()
+
+# init_db()
 
 def get_db_connection():
     conn = sqlite3.connect(app.config['DATABASE'])
@@ -46,9 +116,10 @@ def index():
 @app.route('/api/inventory')
 def get_inventory():
     conn = get_db_connection()
-    cursor = conn.cursor()
+    # Use RealDictCursor to keep your frontend code working exactly as it is
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT * FROM products")
-    products = [dict(row) for row in cursor.fetchall()]
+    products = cursor.fetchall()
     conn.close()
     return jsonify(products)
 
@@ -71,25 +142,25 @@ def add_entry():
     cursor = conn.cursor()
     
     try:
-        cursor.execute("SELECT quantity FROM products WHERE name=?", (name,))
+        cursor.execute("SELECT quantity FROM products WHERE name=%s", (name,))
         row = cursor.fetchone()
         
         if row:
             new_qty = row['quantity'] + qty if entry_type == "Intake" else row['quantity'] - qty
             if new_qty < 0:
                 return jsonify({'success': False, 'error': 'Insufficient stock'}), 400
-            cursor.execute("UPDATE products SET quantity=? WHERE name=?", (new_qty, name))
+            cursor.execute("UPDATE products SET quantity=%s WHERE name=%s", (new_qty, name))
         else:
             if entry_type == "Supply":
                 return jsonify({'success': False, 'error': 'Item does not exist in stock'}), 400
             # Try to insert with brand, fallback without if column doesn't exist
             try:
-                cursor.execute("INSERT INTO products (name, quantity, reorder_level, brand) VALUES (?, ?, ?, ?)", (name, qty, 5, brand))
+                cursor.execute("INSERT INTO products (name, quantity, reorder_level, brand) VALUES (%s, %s, %s, %s)", (name, qty, 5, brand))
             except sqlite3.OperationalError:
                 # If brand column doesn't exist, insert without it
-                cursor.execute("INSERT INTO products (name, quantity, reorder_level) VALUES (?, ?, ?)", (name, qty, 5))
+                cursor.execute("INSERT INTO products (name, quantity, reorder_level) VALUES (%s, %s, %s)", (name, qty, 5))
         
-        cursor.execute("INSERT INTO transactions (item_name, quantity, type, date, time) VALUES (?,?,?,?,?)",
+        cursor.execute("INSERT INTO transactions (item_name, quantity, type, date, time) VALUES (%s,%s,%s,%s,%s)",
                       (name, qty, entry_type, date_str, time_str))
         conn.commit()
         return jsonify({'success': True, 'message': f'{entry_type} recorded successfully!'})
@@ -112,7 +183,7 @@ def update_reorder():
     
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE products SET reorder_level=? WHERE name=?", (level, name))
+    cursor.execute("UPDATE products SET reorder_level=%s WHERE name=%s", (level, name))
     conn.commit()
     conn.close()
     return jsonify({'success': True})
@@ -127,14 +198,14 @@ def get_transactions():
     
     if date_filter:
         if type_filter == 'All':
-            cursor.execute("SELECT * FROM transactions WHERE date=? ORDER BY time DESC", (date_filter,))
+            cursor.execute("SELECT * FROM transactions WHERE date=%s ORDER BY time DESC", (date_filter,))
         else:
-            cursor.execute("SELECT * FROM transactions WHERE date=? AND type=? ORDER BY time DESC", (date_filter, type_filter))
+            cursor.execute("SELECT * FROM transactions WHERE date=%s AND type=%s ORDER BY time DESC", (date_filter, type_filter))
     else:
         if type_filter == 'All':
             cursor.execute("SELECT * FROM transactions ORDER BY date DESC, time DESC LIMIT 100")
         else:
-            cursor.execute("SELECT * FROM transactions WHERE type=? ORDER BY date DESC, time DESC LIMIT 100", (type_filter,))
+            cursor.execute("SELECT * FROM transactions WHERE type=%s ORDER BY date DESC, time DESC LIMIT 100", (type_filter,))
     
     transactions = [dict(row) for row in cursor.fetchall()]
     conn.close()
@@ -153,7 +224,7 @@ def generate_invoice():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT quantity FROM products WHERE name=?", (item,))
+    cursor.execute("SELECT quantity FROM products WHERE name=%s", (item,))
     product = cursor.fetchone()
     
     if not product or product['quantity'] < qty:
@@ -162,10 +233,10 @@ def generate_invoice():
     inv_num = f"INV-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
     today = datetime.date.today().strftime("%Y-%m-%d")
     
-    cursor.execute("UPDATE products SET quantity = quantity - ? WHERE name = ?", (qty, item))
-    cursor.execute("INSERT INTO transactions (item_name, quantity, type, date, time) VALUES (?,?,'Supply',?,?)",
+    cursor.execute("UPDATE products SET quantity = quantity - %s WHERE name = %s", (qty, item))
+    cursor.execute("INSERT INTO transactions (item_name, quantity, type, date, time) VALUES (%s,%s,'Supply',%s,%s)",
                   (item, qty, today, datetime.datetime.now().strftime("%H:%M:%S")))
-    cursor.execute("INSERT INTO invoices VALUES (?,?,?,?)", (inv_num, today, customer, qty))
+    cursor.execute("INSERT INTO invoices VALUES (%s,%s,%s,%s)", (inv_num, today, customer, qty))
     conn.commit()
     conn.close()
     
@@ -202,7 +273,7 @@ def delete_product(product_id):
     cursor = conn.cursor()
     
     # Get product name before deleting
-    cursor.execute("SELECT name FROM products WHERE id=?", (product_id,))
+    cursor.execute("SELECT name FROM products WHERE id=%s", (product_id,))
     product = cursor.fetchone()
     
     if not product:
@@ -211,7 +282,7 @@ def delete_product(product_id):
     product_name = product['name']
     
     # Delete the product
-    cursor.execute("DELETE FROM products WHERE id=?", (product_id,))
+    cursor.execute("DELETE FROM products WHERE id=%s", (product_id,))
     conn.commit()
     conn.close()
     
@@ -223,7 +294,7 @@ def delete_transaction(transaction_id):
     cursor = conn.cursor()
     
     # Get transaction details before deleting
-    cursor.execute("SELECT * FROM transactions WHERE id=?", (transaction_id,))
+    cursor.execute("SELECT * FROM transactions WHERE id=%s", (transaction_id,))
     transaction = cursor.fetchone()
     
     if not transaction:
@@ -234,7 +305,7 @@ def delete_transaction(transaction_id):
     tx_type = transaction['type']
     
     # Reverse the transaction effect on inventory
-    cursor.execute("SELECT quantity FROM products WHERE name=?", (item_name,))
+    cursor.execute("SELECT quantity FROM products WHERE name=%s", (item_name,))
     product = cursor.fetchone()
     
     if product:
@@ -252,10 +323,10 @@ def delete_transaction(transaction_id):
         if new_qty < 0:
             return jsonify({'success': False, 'error': 'Cannot delete transaction - would result in negative inventory'}), 400
         
-        cursor.execute("UPDATE products SET quantity=? WHERE name=?", (new_qty, item_name))
+        cursor.execute("UPDATE products SET quantity=%s WHERE name=%s", (new_qty, item_name))
     
     # Delete the transaction
-    cursor.execute("DELETE FROM transactions WHERE id=?", (transaction_id,))
+    cursor.execute("DELETE FROM transactions WHERE id=%s", (transaction_id,))
     conn.commit()
     conn.close()
     
@@ -295,7 +366,7 @@ def create_sale():
             total_amount += item_total
             
             # Check if product exists and has enough stock
-            cursor.execute("SELECT quantity FROM products WHERE name=?", (item_name,))
+            cursor.execute("SELECT quantity FROM products WHERE name=%s", (item_name,))
             product = cursor.fetchone()
             
             if product:
@@ -303,18 +374,18 @@ def create_sale():
                     return jsonify({'success': False, 'error': f'Insufficient stock for {item_name}'}), 400
                 
                 # Deduct from inventory
-                cursor.execute("UPDATE products SET quantity = quantity - ? WHERE name = ?", (quantity, item_name))
+                cursor.execute("UPDATE products SET quantity = quantity - %s WHERE name = %s", (quantity, item_name))
                 
                 # Log transaction
-                cursor.execute("INSERT INTO transactions (item_name, quantity, type, date, time) VALUES (?,?,'Supply',?,?)",
+                cursor.execute("INSERT INTO transactions (item_name, quantity, type, date, time) VALUES (%s,%s,'Supply',%s,%s)",
                               (item_name, quantity, today, current_time))
             
             # Add sale item
-            cursor.execute("INSERT INTO sale_items (sale_num, item_name, quantity, price, total) VALUES (?,?,?,?,?)",
+            cursor.execute("INSERT INTO sale_items (sale_num, item_name, quantity, price, total) VALUES (%s,%s,%s,%s,%s)",
                           (sale_num, item_name, quantity, price, item_total))
         
         # Create sale record
-        cursor.execute("INSERT INTO sales (sale_num, customer, date, time, total_amount, payment_status) VALUES (?,?,?,?,?,?)",
+        cursor.execute("INSERT INTO sales (sale_num, customer, date, time, total_amount, payment_status) VALUES (%s,%s,%s,%s,%s,%s)",
                       (sale_num, customer, today, current_time, total_amount, payment_status))
         
         conn.commit()
@@ -334,11 +405,11 @@ def get_sales():
     cursor = conn.cursor()
     
     if customer_filter and date_filter:
-        cursor.execute("SELECT * FROM sales WHERE customer LIKE ? AND date=? ORDER BY date DESC, time DESC", (f'%{customer_filter}%', date_filter))
+        cursor.execute("SELECT * FROM sales WHERE customer LIKE %s AND date=%s ORDER BY date DESC, time DESC", (f'%{customer_filter}%', date_filter))
     elif date_filter:
-        cursor.execute("SELECT * FROM sales WHERE date=? ORDER BY date DESC, time DESC", (date_filter,))
+        cursor.execute("SELECT * FROM sales WHERE date=%s ORDER BY date DESC, time DESC", (date_filter,))
     elif customer_filter:
-        cursor.execute("SELECT * FROM sales WHERE customer LIKE ? ORDER BY date DESC, time DESC", (f'%{customer_filter}%',))
+        cursor.execute("SELECT * FROM sales WHERE customer LIKE %s ORDER BY date DESC, time DESC", (f'%{customer_filter}%',))
     else:
         cursor.execute("SELECT * FROM sales ORDER BY date DESC, time DESC LIMIT 100")
     
@@ -361,7 +432,7 @@ def get_sales_summary():
                 SUM(CASE WHEN payment_status='Paid' THEN total_amount ELSE 0 END) as paid_amount,
                 SUM(CASE WHEN payment_status='Credit' THEN total_amount ELSE 0 END) as credit_amount,
                 SUM(CASE WHEN payment_status='Pending' THEN total_amount ELSE 0 END) as pending_amount
-            FROM sales WHERE date=?
+            FROM sales WHERE date=%s
         """, (date_filter,))
     else:
         cursor.execute("""
@@ -397,7 +468,7 @@ def get_dashboard_metrics():
         cursor.execute("""
             SELECT 
                 SUM(total_amount) as total_revenue
-            FROM sales WHERE date=?
+            FROM sales WHERE date=%s
         """, (date_filter,))
     else:
         cursor.execute("""
@@ -414,7 +485,7 @@ def get_dashboard_metrics():
         cursor.execute("""
             SELECT 
                 SUM(amount) as total_expenses
-            FROM expenses WHERE date=?
+            FROM expenses WHERE date=%s
         """, (date_filter,))
     else:
         cursor.execute("""
@@ -442,13 +513,13 @@ def get_sale_details(sale_num):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM sales WHERE sale_num=?", (sale_num,))
+    cursor.execute("SELECT * FROM sales WHERE sale_num=%s", (sale_num,))
     sale = cursor.fetchone()
     
     if not sale:
         return jsonify({'success': False, 'error': 'Sale not found'}), 404
     
-    cursor.execute("SELECT * FROM sale_items WHERE sale_num=?", (sale_num,))
+    cursor.execute("SELECT * FROM sale_items WHERE sale_num=%s", (sale_num,))
     items = [dict(row) for row in cursor.fetchall()]
     
     conn.close()
@@ -463,13 +534,13 @@ def generate_sale_invoice(sale_num):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM sales WHERE sale_num=?", (sale_num,))
+    cursor.execute("SELECT * FROM sales WHERE sale_num=%s", (sale_num,))
     sale = cursor.fetchone()
     
     if not sale:
         return jsonify({'success': False, 'error': 'Sale not found'}), 404
     
-    cursor.execute("SELECT * FROM sale_items WHERE sale_num=?", (sale_num,))
+    cursor.execute("SELECT * FROM sale_items WHERE sale_num=%s", (sale_num,))
     items = [dict(row) for row in cursor.fetchall()]
     conn.close()
     
@@ -533,13 +604,13 @@ def update_sale_status(sale_num):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM sales WHERE sale_num=?", (sale_num,))
+    cursor.execute("SELECT * FROM sales WHERE sale_num=%s", (sale_num,))
     sale = cursor.fetchone()
     
     if not sale:
         return jsonify({'success': False, 'error': 'Sale not found'}), 404
     
-    cursor.execute("UPDATE sales SET payment_status=? WHERE sale_num=?", (new_status, sale_num))
+    cursor.execute("UPDATE sales SET payment_status=%s WHERE sale_num=%s", (new_status, sale_num))
     conn.commit()
     conn.close()
     
@@ -564,7 +635,7 @@ def add_expense():
     cursor = conn.cursor()
     
     try:
-        cursor.execute("INSERT INTO expenses (description, category, amount, date, time, notes) VALUES (?,?,?,?,?,?)",
+        cursor.execute("INSERT INTO expenses (description, category, amount, date, time, notes) VALUES (%s,%s,%s,%s,%s,%s)",
                       (description, category, amount, date_str, time_str, notes))
         conn.commit()
         conn.close()
@@ -583,12 +654,12 @@ def get_expenses():
     cursor = conn.cursor()
     
     if date_filter and category_filter:
-        cursor.execute("SELECT * FROM expenses WHERE date=? AND category=? ORDER BY date DESC, time DESC", 
+        cursor.execute("SELECT * FROM expenses WHERE date=%s AND category=%s ORDER BY date DESC, time DESC", 
                       (date_filter, category_filter))
     elif date_filter:
-        cursor.execute("SELECT * FROM expenses WHERE date=? ORDER BY date DESC, time DESC", (date_filter,))
+        cursor.execute("SELECT * FROM expenses WHERE date=%s ORDER BY date DESC, time DESC", (date_filter,))
     elif category_filter:
-        cursor.execute("SELECT * FROM expenses WHERE category=? ORDER BY date DESC, time DESC", (category_filter,))
+        cursor.execute("SELECT * FROM expenses WHERE category=%s ORDER BY date DESC, time DESC", (category_filter,))
     else:
         cursor.execute("SELECT * FROM expenses ORDER BY date DESC, time DESC")
     
@@ -604,14 +675,14 @@ def get_expenses_summary():
     cursor = conn.cursor()
     
     if date_filter:
-        cursor.execute("SELECT SUM(amount) as total_expenses FROM expenses WHERE date=?", (date_filter,))
+        cursor.execute("SELECT SUM(amount) as total_expenses FROM expenses WHERE date=%s", (date_filter,))
     else:
         cursor.execute("SELECT SUM(amount) as total_expenses FROM expenses")
     
     result = cursor.fetchone()
     
     if date_filter:
-        cursor.execute("SELECT category, SUM(amount) as total FROM expenses WHERE date=? GROUP BY category ORDER BY total DESC",
+        cursor.execute("SELECT category, SUM(amount) as total FROM expenses WHERE date=%s GROUP BY category ORDER BY total DESC",
                       (date_filter,))
     else:
         cursor.execute("SELECT category, SUM(amount) as total FROM expenses GROUP BY category ORDER BY total DESC")
@@ -629,13 +700,13 @@ def delete_expense(expense_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM expenses WHERE id=?", (expense_id,))
+    cursor.execute("SELECT * FROM expenses WHERE id=%s", (expense_id,))
     expense = cursor.fetchone()
     
     if not expense:
         return jsonify({'success': False, 'error': 'Expense not found'}), 404
     
-    cursor.execute("DELETE FROM expenses WHERE id=?", (expense_id,))
+    cursor.execute("DELETE FROM expenses WHERE id=%s", (expense_id,))
     conn.commit()
     conn.close()
     
@@ -647,7 +718,7 @@ def delete_sale(sale_num):
     cursor = conn.cursor()
     
     # Get sale details before deleting
-    cursor.execute("SELECT * FROM sales WHERE sale_num=?", (sale_num,))
+    cursor.execute("SELECT * FROM sales WHERE sale_num=%s", (sale_num,))
     sale = cursor.fetchone()
     
     if not sale:
@@ -655,7 +726,7 @@ def delete_sale(sale_num):
     
     try:
         # Get all items in this sale to reverse inventory
-        cursor.execute("SELECT * FROM sale_items WHERE sale_num=?", (sale_num,))
+        cursor.execute("SELECT * FROM sale_items WHERE sale_num=%s", (sale_num,))
         items = [dict(row) for row in cursor.fetchall()]
         
         # Reverse the inventory for each item
@@ -663,21 +734,21 @@ def delete_sale(sale_num):
             item_name = item['item_name']
             quantity = item['quantity']
             
-            cursor.execute("SELECT quantity FROM products WHERE name=?", (item_name,))
+            cursor.execute("SELECT quantity FROM products WHERE name=%s", (item_name,))
             product = cursor.fetchone()
             
             if product:
                 new_qty = product['quantity'] + quantity
-                cursor.execute("UPDATE products SET quantity=? WHERE name=?", (new_qty, item_name))
+                cursor.execute("UPDATE products SET quantity=%s WHERE name=%s", (new_qty, item_name))
         
         # Delete sale items
-        cursor.execute("DELETE FROM sale_items WHERE sale_num=?", (sale_num,))
+        cursor.execute("DELETE FROM sale_items WHERE sale_num=%s", (sale_num,))
         
         # Delete the sale
-        cursor.execute("DELETE FROM sales WHERE sale_num=?", (sale_num,))
+        cursor.execute("DELETE FROM sales WHERE sale_num=%s", (sale_num,))
         
         # Delete related transactions (Supply type)
-        cursor.execute("DELETE FROM transactions WHERE type='Supply' AND item_name IN (SELECT item_name FROM sale_items WHERE sale_num=?)", (sale_num,))
+        cursor.execute("DELETE FROM transactions WHERE type='Supply' AND item_name IN (SELECT item_name FROM sale_items WHERE sale_num=%s)", (sale_num,))
         
         conn.commit()
         conn.close()
