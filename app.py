@@ -77,104 +77,10 @@ def init_db():
 # Run init_db once
 init_db()
 
-# --- AUTHENTICATION HELPERS ---
-def login_required(f):
-    """Decorator to require login for routes"""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'user_id' not in session:
-            if request.path.startswith('/api/'):
-                return jsonify({'success': False, 'error': 'Authentication required'}), 401
-            return redirect(url_for('login'))
-        return f(*args, **kwargs)
-    return decorated_function
 
-def admin_required(f):
-    """Decorator to require admin role"""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'error': 'Authentication required'}), 401
-        
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute('SELECT role FROM users WHERE id = %s', (session['user_id'],))
-        user = cursor.fetchone()
-        conn.close()
-        
-        if not user or user['role'] != 'admin':
-            return jsonify({'success': False, 'error': 'Admin access required'}), 403
-        return f(*args, **kwargs)
-    return decorated_function
-
-# --- AUTHENTICATION ROUTES ---
-@app.route('/login')
-def login():
-    if 'user_id' in session:
-        return redirect(url_for('index'))
-    return render_template('login.html')
-
-@app.route('/api/login', methods=['POST'])
-def api_login():
-    data = request.json
-    username = data.get('username', '').strip()
-    password = data.get('password', '')
-    
-    if not username or not password:
-        return jsonify({'success': False, 'error': 'Username and password required'}), 400
-    
-    conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
-    cursor.execute('SELECT * FROM users WHERE username = %s', (username,))
-    user = cursor.fetchone()
-    conn.close()
-    
-    if not user:
-        return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
-    
-    if not user['is_active']:
-        return jsonify({'success': False, 'error': 'Account is disabled'}), 401
-    
-    if not check_password_hash(user['password_hash'], password):
-        return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
-    
-    # Set session
-    session['user_id'] = user['id']
-    session['username'] = user['username']
-    session['role'] = user['role']
-    session['full_name'] = user['full_name']
-    
-    return jsonify({
-        'success': True,
-        'user': {
-            'id': user['id'],
-            'username': user['username'],
-            'full_name': user['full_name'],
-            'role': user['role']
-        }
-    })
-
-@app.route('/api/logout', methods=['POST'])
-def api_logout():
-    session.clear()
-    return jsonify({'success': True})
-
-@app.route('/api/current-user')
-@login_required
-def current_user():
-    return jsonify({
-        'success': True,
-        'user': {
-            'id': session.get('user_id'),
-            'username': session.get('username'),
-            'full_name': session.get('full_name'),
-            'role': session.get('role')
-        }
-    })
 
 # --- ROUTES ---
 @app.route('/')
-@login_required
 def index():
     return render_template('dashboard.html')
 
