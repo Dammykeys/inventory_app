@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,6 +8,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
+
 <body>
     <div class="container">
         <!-- Sidebar Navigation -->
@@ -44,6 +46,10 @@
                     <i class="fas fa-receipt"></i>
                     <span>Expenses</span>
                 </a>
+                <a href="#" class="nav-item admin-only" data-page="admin" style="display: none;">
+                    <i class="fas fa-users-cog"></i>
+                    <span>Admin Panel</span>
+                </a>
             </nav>
         </aside>
 
@@ -52,10 +58,17 @@
             <!-- Header -->
             <header class="header">
                 <div class="header-left">
+                    <i class="fas fa-bars mobile-toggle" id="mobileToggle"></i>
                     <h1>Inventory Management System</h1>
                 </div>
                 <div class="header-right">
                     <div id="syncStatus" class="sync-status"></div>
+                    <div class="user-menu" style="display: inline-block; margin-left: 15px;">
+                        <span id="currentUser" style="font-weight: 600; margin-right: 10px;"></span>
+                        <button id="logoutBtn" class="btn btn-small btn-danger" style="padding: 5px 10px;">
+                            <i class="fas fa-sign-out-alt"></i>
+                        </button>
+                    </div>
                     <span class="date-time" id="dateTime"></span>
                 </div>
             </header>
@@ -203,7 +216,8 @@
             <section id="inventory" class="page">
                 <div class="page-header">
                     <h2>Inventory List</h2>
-                    <input type="text" id="searchInventory" placeholder="Search items..." list="saleItemSuggestions" class="search-box">
+                    <input type="text" id="searchInventory" placeholder="Search items..." list="saleItemSuggestions"
+                        class="search-box">
                 </div>
                 <div class="card">
                     <div class="table-responsive">
@@ -261,7 +275,8 @@
                         <form id="entryForm">
                             <div class="form-group">
                                 <label for="itemName">Item Name <span class="required">*</span></label>
-                                <input type="text" id="itemName" placeholder="Enter item name" list="itemSuggestions" required>
+                                <input type="text" id="itemName" placeholder="Enter item name" list="itemSuggestions"
+                                    required>
                                 <datalist id="itemSuggestions"></datalist>
                             </div>
                             <div class="form-group">
@@ -292,12 +307,14 @@
                         <form id="reorderForm">
                             <div class="form-group">
                                 <label for="reorderItem">Select Item <span class="required">*</span></label>
-                                <input type="text" id="reorderItem" placeholder="Enter item name" list="itemSuggestions" required>
+                                <input type="text" id="reorderItem" placeholder="Enter item name" list="itemSuggestions"
+                                    required>
                                 <datalist id="itemSuggestions"></datalist>
                             </div>
                             <div class="form-group">
                                 <label for="reorderLevel">Reorder Level <span class="required">*</span></label>
-                                <input type="number" id="reorderLevel" placeholder="Enter reorder level" min="0" required>
+                                <input type="number" id="reorderLevel" placeholder="Enter reorder level" min="0"
+                                    required>
                             </div>
                             <button type="submit" class="btn btn-secondary">
                                 <i class="fas fa-sync"></i> Update
@@ -377,7 +394,7 @@
                 <div class="page-header">
                     <h2>Sales & Credit Management</h2>
                 </div>
-                
+
                 <div class="sales-container">
                     <!-- Create Sale Form -->
                     <div class="card">
@@ -385,7 +402,8 @@
                         <form id="saleForm">
                             <div class="form-group">
                                 <label for="saleCustomer">Customer Name <span class="required">*</span></label>
-                                <input type="text" id="saleCustomer" placeholder="Enter customer name" list="customerSuggestions" required>
+                                <input type="text" id="saleCustomer" placeholder="Enter customer name"
+                                    list="customerSuggestions" required>
                             </div>
 
                             <div class="form-group">
@@ -407,7 +425,8 @@
                                     <div class="form-row">
                                         <div class="form-group">
                                             <label>Item Name <span class="required">*</span></label>
-                                            <input type="text" class="item-name" placeholder="Item name" list="saleItemSuggestions" required>
+                                            <input type="text" class="item-name" placeholder="Item name"
+                                                list="saleItemSuggestions" required>
                                         </div>
                                         <div class="form-group">
                                             <label>Quantity <span class="required">*</span></label>
@@ -415,7 +434,8 @@
                                         </div>
                                         <div class="form-group">
                                             <label>Price <span class="required">*</span></label>
-                                            <input type="number" class="item-price" min="0" step="0.01" placeholder="Price" required>
+                                            <input type="number" class="item-price" min="0" step="0.01"
+                                                placeholder="Price" required>
                                         </div>
                                         <div class="form-group">
                                             <label>Total</label>
@@ -423,7 +443,8 @@
                                         </div>
                                         <div class="form-group btn-group">
                                             <label>&nbsp;</label>
-                                            <button type="button" class="btn btn-danger btn-small remove-item" onclick="removeItem(this)">
+                                            <button type="button" class="btn btn-danger btn-small remove-item"
+                                                onclick="removeItem(this)">
                                                 <i class="fas fa-trash"></i> Remove
                                             </button>
                                         </div>
@@ -467,7 +488,8 @@
                         <h3>Sales History</h3>
                         <div class="filter-group">
                             <input type="date" id="salesHistoryDate" class="filter-input">
-                            <input type="text" id="searchCustomer" placeholder="Search by customer..." class="filter-input">
+                            <input type="text" id="searchCustomer" placeholder="Search by customer..."
+                                class="filter-input">
                             <button id="searchSalesBtn" class="btn btn-secondary">
                                 <i class="fas fa-search"></i> Search
                             </button>
@@ -555,7 +577,8 @@
                             <div class="form-row">
                                 <div class="form-group">
                                     <label for="expenseAmount">Amount <span class="required">*</span></label>
-                                    <input type="number" id="expenseAmount" placeholder="Amount" min="0" step="0.01" required>
+                                    <input type="number" id="expenseAmount" placeholder="Amount" min="0" step="0.01"
+                                        required>
                                 </div>
                                 <div class="form-group">
                                     <label for="expenseDate">Date <span class="required">*</span></label>
@@ -565,7 +588,8 @@
 
                             <div class="form-group">
                                 <label for="expenseNotes">Notes</label>
-                                <textarea id="expenseNotes" placeholder="Additional notes (optional)" rows="3"></textarea>
+                                <textarea id="expenseNotes" placeholder="Additional notes (optional)"
+                                    rows="3"></textarea>
                             </div>
 
                             <button type="submit" class="btn btn-primary btn-large">
@@ -583,7 +607,7 @@
                                 <i class="fas fa-filter"></i> Filter
                             </button>
                         </div>
-                        
+
                         <div class="summary-box">
                             <div class="summary-row total">
                                 <span>Total Expenses:</span>
@@ -709,5 +733,75 @@
                 });
         }
     </script>
+    <!-- Admin Page -->
+    <section id="admin" class="page">
+        <div class="page-header">
+            <h2>User Management</h2>
+            <button class="btn btn-primary" onclick="openAddUserModal()">
+                <i class="fas fa-user-plus"></i> Add User
+            </button>
+        </div>
+
+        <div class="card">
+            <h3>System Users</h3>
+            <div class="table-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Username</th>
+                            <th>Full Name</th>
+                            <th>Role</th>
+                            <th>Status</th>
+                            <th>Created At</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTable">
+                        <!-- Users will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+    </main>
+
+    <!-- Add User Modal -->
+    <div id="addUserModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeAddUserModal()">&times;</span>
+            <h2>Add New User</h2>
+            <form id="addUserForm">
+                <div class="form-group">
+                    <label for="newUsername">Username <span class="required">*</span></label>
+                    <input type="text" id="newUsername" required>
+                </div>
+                <div class="form-group">
+                    <label for="newFullName">Full Name</label>
+                    <input type="text" id="newFullName">
+                </div>
+                <div class="form-group">
+                    <label for="newEmail">Email</label>
+                    <input type="email" id="newEmail">
+                </div>
+                <div class="form-group">
+                    <label for="newPassword">Password <span class="required">*</span></label>
+                    <input type="password" id="newPassword" required>
+                </div>
+                <div class="form-group">
+                    <label for="newRole">Role <span class="required">*</span></label>
+                    <select id="newRole" required>
+                        <option value="staff">Staff</option>
+                        <option value="manager">Manager</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn btn-primary">Create User</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeAddUserModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
 </body>
+
 </html>

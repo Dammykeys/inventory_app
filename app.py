@@ -1,35 +1,35 @@
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, session, redirect, url_for
 import sqlite3
 import datetime
 import os
 from fpdf import FPDF
 from pathlib import Path
-
-# app = Flask(__name__)
-# app.config['DATABASE'] = 'inventory.db'
-
-
-
-import psycopg2
-from psycopg2.extras import RealDictCursor # Allows us to access rows like dictionaries
-# from flask import Flask, render_template, request, jsonify, send_file
+from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
 
 app = Flask(__name__)
+app.config['DATABASE'] = 'inventory.db'
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
 # --- DATABASE SETUP ---
+def dict_factory(cursor, row):
+    d = {}
+    for idx, col in enumerate(cursor.description):
+        d[col[0]] = row[idx]
+    return d
+
 def get_db_connection():
-    # Vercel automatically provides the POSTGRES_URL environment variable 
-    # once you connect the Postgres storage to your project
-    conn = psycopg2.connect(os.environ.get('POSTGRES_URL'))
+    conn = sqlite3.connect(app.config['DATABASE'])
+    conn.row_factory = dict_factory
     return conn
 
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Postgres uses 'SERIAL' instead of 'INTEGER PRIMARY KEY AUTOINCREMENT'
     cursor.execute('''CREATE TABLE IF NOT EXISTS products 
-                      (id SERIAL PRIMARY KEY, 
+                      (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                        name TEXT UNIQUE, 
                        quantity INTEGER, 
                        reorder_level INTEGER, 
@@ -37,7 +37,7 @@ def init_db():
                        brand TEXT)''')
     
     cursor.execute('''CREATE TABLE IF NOT EXISTS transactions 
-                      (id SERIAL PRIMARY KEY, 
+                      (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                        item_name TEXT, 
                        quantity INTEGER, 
                        type TEXT, 
@@ -45,7 +45,7 @@ def init_db():
                        time TEXT)''')
     
     cursor.execute('''CREATE TABLE IF NOT EXISTS sales 
-                      (id SERIAL PRIMARY KEY, 
+                      (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                        sale_num TEXT UNIQUE, 
                        customer TEXT, 
                        date TEXT, 
@@ -54,7 +54,7 @@ def init_db():
                        payment_status TEXT)''')
     
     cursor.execute('''CREATE TABLE IF NOT EXISTS sale_items 
-                      (id SERIAL PRIMARY KEY, 
+                      (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                        sale_num TEXT, 
                        item_name TEXT, 
                        quantity INTEGER, 
@@ -62,7 +62,7 @@ def init_db():
                        total REAL)''')
 
     cursor.execute('''CREATE TABLE IF NOT EXISTS expenses 
-                      (id SERIAL PRIMARY KEY, 
+                      (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                        description TEXT, 
                        category TEXT, 
                        amount REAL, 
@@ -70,12 +70,58 @@ def init_db():
                        time TEXT, 
                        notes TEXT)''')
     
+    # Users Table
+    cursor.execute('''CREATE TABLE IF NOT EXISTS users 
+                      (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                       username TEXT UNIQUE NOT NULL,
+                       password_hash TEXT NOT NULL,
+                       full_name TEXT,
+                       email TEXT,
+                       role TEXT NOT NULL DEFAULT 'staff',
+                       created_at TEXT,
+                       is_active BOOLEAN DEFAULT 1)''')
+
+    # Create default admin if not exists
+    cursor.execute("SELECT * FROM users WHERE username=?", ('admin',))
+    if not cursor.fetchone():
+        admin_hash = generate_password_hash('admin123')
+        created_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("""INSERT INTO users (username, password_hash, full_name, email, role, created_at, is_active)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                      ('admin', admin_hash, 'Administrator', 'admin@inventory.local', 'admin', created_at, 1))
+        print("Default admin account created.")
+    
     conn.commit()
-    cursor.close()
     conn.close()
 
 # Run init_db once
 init_db()
+
+# --- AUTHENTICATION HELPERS ---
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            if request.path.startswith('/api/'):
+                return jsonify({'success': False, 'error': 'Authentication required'}), 401
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'error': 'Authentication required'}), 401
+        
+        conn = get_db_connection()
+        user = conn.execute('SELECT role FROM users WHERE id = ?', (session['user_id'],)).fetchone()
+        conn.close()
+        
+        if not user or user['role'] != 'admin':
+            return jsonify({'success': False, 'error': 'Admin access required'}), 403
+        return f(*args, **kwargs)
+    return decorated_function
 
 
 
@@ -87,7 +133,7 @@ def index():
 @app.route('/api/inventory')
 def get_inventory():
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor = conn.cursor()
     cursor.execute("SELECT * FROM products")
     products = cursor.fetchall()
     conn.close()
@@ -112,29 +158,29 @@ def add_entry():
     cursor = conn.cursor()
     
     try:
-        cursor.execute("SELECT quantity FROM products WHERE name=%s", (name,))
+        cursor.execute("SELECT quantity FROM products WHERE name=?", (name,))
         row = cursor.fetchone()
         
         if row:
             new_qty = row['quantity'] + qty if entry_type == "Intake" else row['quantity'] - qty
             if new_qty < 0:
                 return jsonify({'success': False, 'error': 'Insufficient stock'}), 400
-            cursor.execute("UPDATE products SET quantity=%s WHERE name=%s", (new_qty, name))
+            cursor.execute("UPDATE products SET quantity=? WHERE name=?", (new_qty, name))
         else:
             if entry_type == "Supply":
                 return jsonify({'success': False, 'error': 'Item does not exist in stock'}), 400
             # Try to insert with brand, fallback without if column doesn't exist
             try:
-                cursor.execute("INSERT INTO products (name, quantity, reorder_level, brand) VALUES (%s, %s, %s, %s)", (name, qty, 5, brand))
+                cursor.execute("INSERT INTO products (name, quantity, reorder_level, brand) VALUES (?, ?, ?, ?)", (name, qty, 5, brand))
             except sqlite3.OperationalError:
                 # If brand column doesn't exist, insert without it
-                cursor.execute("INSERT INTO products (name, quantity, reorder_level) VALUES (%s, %s, %s)", (name, qty, 5))
+                cursor.execute("INSERT INTO products (name, quantity, reorder_level) VALUES (?, ?, ?)", (name, qty, 5))
         
-        cursor.execute("INSERT INTO transactions (item_name, quantity, type, date, time) VALUES (%s,%s,%s,%s,%s)",
+        cursor.execute("INSERT INTO transactions (item_name, quantity, type, date, time) VALUES (?,?,?,?,?)",
                       (name, qty, entry_type, date_str, time_str))
         conn.commit()
         return jsonify({'success': True, 'message': f'{entry_type} recorded successfully!'})
-    except psycopg2.IntegrityError:
+    except sqlite3.IntegrityError:
         conn.rollback()
         return jsonify({'success': False, 'error': 'Item name already exists'}), 400
     except Exception as e:
@@ -154,7 +200,7 @@ def update_reorder():
     
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("UPDATE products SET reorder_level=%s WHERE name=%s", (level, name))
+    cursor.execute("UPDATE products SET reorder_level=? WHERE name=?", (level, name))
     conn.commit()
     conn.close()
     return jsonify({'success': True})
@@ -165,18 +211,18 @@ def get_transactions():
     type_filter = request.args.get('type', 'All')
     
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor = conn.cursor()
     
     if date_filter:
         if type_filter == 'All':
-            cursor.execute("SELECT * FROM transactions WHERE date=%s ORDER BY time DESC", (date_filter,))
+            cursor.execute("SELECT * FROM transactions WHERE date=? ORDER BY time DESC", (date_filter,))
         else:
-            cursor.execute("SELECT * FROM transactions WHERE date=%s AND type=%s ORDER BY time DESC", (date_filter, type_filter))
+            cursor.execute("SELECT * FROM transactions WHERE date=? AND type=? ORDER BY time DESC", (date_filter, type_filter))
     else:
         if type_filter == 'All':
             cursor.execute("SELECT * FROM transactions ORDER BY date DESC, time DESC LIMIT 100")
         else:
-            cursor.execute("SELECT * FROM transactions WHERE type=%s ORDER BY date DESC, time DESC LIMIT 100", (type_filter,))
+            cursor.execute("SELECT * FROM transactions WHERE type=? ORDER BY date DESC, time DESC LIMIT 100", (type_filter,))
     
     transactions = cursor.fetchall()
     conn.close()
@@ -193,9 +239,9 @@ def generate_invoice():
         return jsonify({'success': False, 'error': 'Invalid input'}), 400
     
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor = conn.cursor()
     
-    cursor.execute("SELECT quantity FROM products WHERE name=%s", (item,))
+    cursor.execute("SELECT quantity FROM products WHERE name=?", (item,))
     product = cursor.fetchone()
     
     if not product or product['quantity'] < qty:
@@ -204,10 +250,10 @@ def generate_invoice():
     inv_num = f"INV-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
     today = datetime.date.today().strftime("%Y-%m-%d")
     
-    cursor.execute("UPDATE products SET quantity = quantity - %s WHERE name = %s", (qty, item))
-    cursor.execute("INSERT INTO transactions (item_name, quantity, type, date, time) VALUES (%s,%s,'Supply',%s,%s)",
+    cursor.execute("UPDATE products SET quantity = quantity - ? WHERE name = ?", (qty, item))
+    cursor.execute("INSERT INTO transactions (item_name, quantity, type, date, time) VALUES (?,?,'Supply',?,?)",
                   (item, qty, today, datetime.datetime.now().strftime("%H:%M:%S")))
-    cursor.execute("INSERT INTO invoices VALUES (%s,%s,%s,%s)", (inv_num, today, customer, qty))
+    cursor.execute("INSERT INTO invoices VALUES (?,?,?,?)", (inv_num, today, customer, qty))
     conn.commit()
     conn.close()
     
@@ -241,10 +287,10 @@ def download_file(filename):
 @app.route('/api/delete-product/<int:product_id>', methods=['DELETE'])
 def delete_product(product_id):
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor = conn.cursor()
     
     # Get product name before deleting
-    cursor.execute("SELECT name FROM products WHERE id=%s", (product_id,))
+    cursor.execute("SELECT name FROM products WHERE id=?", (product_id,))
     product = cursor.fetchone()
     
     if not product:
@@ -253,7 +299,7 @@ def delete_product(product_id):
     product_name = product['name']
     
     # Delete the product
-    cursor.execute("DELETE FROM products WHERE id=%s", (product_id,))
+    cursor.execute("DELETE FROM products WHERE id=?", (product_id,))
     conn.commit()
     conn.close()
     
@@ -262,10 +308,10 @@ def delete_product(product_id):
 @app.route('/api/delete-transaction/<int:transaction_id>', methods=['DELETE'])
 def delete_transaction(transaction_id):
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor = conn.cursor()
     
     # Get transaction details before deleting
-    cursor.execute("SELECT * FROM transactions WHERE id=%s", (transaction_id,))
+    cursor.execute("SELECT * FROM transactions WHERE id=?", (transaction_id,))
     transaction = cursor.fetchone()
     
     if not transaction:
@@ -276,7 +322,7 @@ def delete_transaction(transaction_id):
     tx_type = transaction['type']
     
     # Reverse the transaction effect on inventory
-    cursor.execute("SELECT quantity FROM products WHERE name=%s", (item_name,))
+    cursor.execute("SELECT quantity FROM products WHERE name=?", (item_name,))
     product = cursor.fetchone()
     
     if product:
@@ -294,10 +340,10 @@ def delete_transaction(transaction_id):
         if new_qty < 0:
             return jsonify({'success': False, 'error': 'Cannot delete transaction - would result in negative inventory'}), 400
         
-        cursor.execute("UPDATE products SET quantity=%s WHERE name=%s", (new_qty, item_name))
+        cursor.execute("UPDATE products SET quantity=? WHERE name=?", (new_qty, item_name))
     
     # Delete the transaction
-    cursor.execute("DELETE FROM transactions WHERE id=%s", (transaction_id,))
+    cursor.execute("DELETE FROM transactions WHERE id=?", (transaction_id,))
     conn.commit()
     conn.close()
     
@@ -315,7 +361,7 @@ def create_sale():
         return jsonify({'success': False, 'error': 'Customer and items required'}), 400
     
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor = conn.cursor()
     
     try:
         # Generate sale number
@@ -337,7 +383,7 @@ def create_sale():
             total_amount += item_total
             
             # Check if product exists and has enough stock
-            cursor.execute("SELECT quantity FROM products WHERE name=%s", (item_name,))
+            cursor.execute("SELECT quantity FROM products WHERE name=?", (item_name,))
             product = cursor.fetchone()
             
             if product:
@@ -345,18 +391,18 @@ def create_sale():
                     return jsonify({'success': False, 'error': f'Insufficient stock for {item_name}'}), 400
                 
                 # Deduct from inventory
-                cursor.execute("UPDATE products SET quantity = quantity - %s WHERE name = %s", (quantity, item_name))
+                cursor.execute("UPDATE products SET quantity = quantity - ? WHERE name = ?", (quantity, item_name))
                 
                 # Log transaction
-                cursor.execute("INSERT INTO transactions (item_name, quantity, type, date, time) VALUES (%s,%s,'Supply',%s,%s)",
+                cursor.execute("INSERT INTO transactions (item_name, quantity, type, date, time) VALUES (?,?,'Supply',?,?)",
                               (item_name, quantity, today, current_time))
             
             # Add sale item
-            cursor.execute("INSERT INTO sale_items (sale_num, item_name, quantity, price, total) VALUES (%s,%s,%s,%s,%s)",
+            cursor.execute("INSERT INTO sale_items (sale_num, item_name, quantity, price, total) VALUES (?,?,?,?,?)",
                           (sale_num, item_name, quantity, price, item_total))
         
         # Create sale record
-        cursor.execute("INSERT INTO sales (sale_num, customer, date, time, total_amount, payment_status) VALUES (%s,%s,%s,%s,%s,%s)",
+        cursor.execute("INSERT INTO sales (sale_num, customer, date, time, total_amount, payment_status) VALUES (?,?,?,?,?,?)",
                       (sale_num, customer, today, current_time, total_amount, payment_status))
         
         conn.commit()
@@ -375,14 +421,14 @@ def get_sales():
     date_filter = request.args.get('date', '').strip()
     
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor = conn.cursor()
     
     if customer_filter and date_filter:
-        cursor.execute("SELECT * FROM sales WHERE customer LIKE %s AND date=%s ORDER BY date DESC, time DESC", (f'%{customer_filter}%', date_filter))
+        cursor.execute("SELECT * FROM sales WHERE customer LIKE ? AND date=? ORDER BY date DESC, time DESC", (f'%{customer_filter}%', date_filter))
     elif date_filter:
-        cursor.execute("SELECT * FROM sales WHERE date=%s ORDER BY date DESC, time DESC", (date_filter,))
+        cursor.execute("SELECT * FROM sales WHERE date=? ORDER BY date DESC, time DESC", (date_filter,))
     elif customer_filter:
-        cursor.execute("SELECT * FROM sales WHERE customer LIKE %s ORDER BY date DESC, time DESC", (f'%{customer_filter}%',))
+        cursor.execute("SELECT * FROM sales WHERE customer LIKE ? ORDER BY date DESC, time DESC", (f'%{customer_filter}%',))
     else:
         cursor.execute("SELECT * FROM sales ORDER BY date DESC, time DESC LIMIT 100")
     
@@ -395,7 +441,7 @@ def get_sales_summary():
     date_filter = request.args.get('date', '').strip()
     
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor = conn.cursor()
     
     if date_filter:
         cursor.execute("""
@@ -405,7 +451,7 @@ def get_sales_summary():
                 SUM(CASE WHEN payment_status='Paid' THEN total_amount ELSE 0 END) as paid_amount,
                 SUM(CASE WHEN payment_status='Credit' THEN total_amount ELSE 0 END) as credit_amount,
                 SUM(CASE WHEN payment_status='Pending' THEN total_amount ELSE 0 END) as pending_amount
-            FROM sales WHERE date=%s
+            FROM sales WHERE date=?
         """, (date_filter,))
     else:
         cursor.execute("""
@@ -434,14 +480,14 @@ def get_dashboard_metrics():
     date_filter = request.args.get('date', '').strip()
     
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor = conn.cursor()
     
     # Get sales data
     if date_filter:
         cursor.execute("""
             SELECT 
                 SUM(total_amount) as total_revenue
-            FROM sales WHERE date=%s
+            FROM sales WHERE date=?
         """, (date_filter,))
     else:
         cursor.execute("""
@@ -458,7 +504,7 @@ def get_dashboard_metrics():
         cursor.execute("""
             SELECT 
                 SUM(amount) as total_expenses
-            FROM expenses WHERE date=%s
+            FROM expenses WHERE date=?
         """, (date_filter,))
     else:
         cursor.execute("""
@@ -484,15 +530,15 @@ def get_dashboard_metrics():
 @app.route('/api/sale/<sale_num>')
 def get_sale_details(sale_num):
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM sales WHERE sale_num=%s", (sale_num,))
+    cursor.execute("SELECT * FROM sales WHERE sale_num=?", (sale_num,))
     sale = cursor.fetchone()
     
     if not sale:
         return jsonify({'success': False, 'error': 'Sale not found'}), 404
     
-    cursor.execute("SELECT * FROM sale_items WHERE sale_num=%s", (sale_num,))
+    cursor.execute("SELECT * FROM sale_items WHERE sale_num=?", (sale_num,))
     items = [dict(row) for row in cursor.fetchall()]
     
     conn.close()
@@ -505,15 +551,15 @@ def get_sale_details(sale_num):
 @app.route('/api/generate-sale-invoice/<sale_num>', methods=['GET'])
 def generate_sale_invoice(sale_num):
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM sales WHERE sale_num=%s", (sale_num,))
+    cursor.execute("SELECT * FROM sales WHERE sale_num=?", (sale_num,))
     sale = cursor.fetchone()
     
     if not sale:
         return jsonify({'success': False, 'error': 'Sale not found'}), 404
     
-    cursor.execute("SELECT * FROM sale_items WHERE sale_num=%s", (sale_num,))
+    cursor.execute("SELECT * FROM sale_items WHERE sale_num=?", (sale_num,))
     items = [dict(row) for row in cursor.fetchall()]
     conn.close()
     
@@ -575,15 +621,15 @@ def update_sale_status(sale_num):
         return jsonify({'success': False, 'error': 'Invalid payment status'}), 400
     
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM sales WHERE sale_num=%s", (sale_num,))
+    cursor.execute("SELECT * FROM sales WHERE sale_num=?", (sale_num,))
     sale = cursor.fetchone()
     
     if not sale:
         return jsonify({'success': False, 'error': 'Sale not found'}), 404
     
-    cursor.execute("UPDATE sales SET payment_status=%s WHERE sale_num=%s", (new_status, sale_num))
+    cursor.execute("UPDATE sales SET payment_status=? WHERE sale_num=?", (new_status, sale_num))
     conn.commit()
     conn.close()
     
@@ -605,10 +651,10 @@ def add_expense():
     time_str = datetime.datetime.now().strftime("%H:%M:%S")
     
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor = conn.cursor()
     
     try:
-        cursor.execute("INSERT INTO expenses (description, category, amount, date, time, notes) VALUES (%s,%s,%s,%s,%s,%s)",
+        cursor.execute("INSERT INTO expenses (description, category, amount, date, time, notes) VALUES (?,?,?,?,?,?)",
                       (description, category, amount, date_str, time_str, notes))
         conn.commit()
         conn.close()
@@ -624,15 +670,15 @@ def get_expenses():
     category_filter = request.args.get('category', '').strip()
     
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor = conn.cursor()
     
     if date_filter and category_filter:
-        cursor.execute("SELECT * FROM expenses WHERE date=%s AND category=%s ORDER BY date DESC, time DESC", 
+        cursor.execute("SELECT * FROM expenses WHERE date=? AND category=? ORDER BY date DESC, time DESC", 
                       (date_filter, category_filter))
     elif date_filter:
-        cursor.execute("SELECT * FROM expenses WHERE date=%s ORDER BY date DESC, time DESC", (date_filter,))
+        cursor.execute("SELECT * FROM expenses WHERE date=? ORDER BY date DESC, time DESC", (date_filter,))
     elif category_filter:
-        cursor.execute("SELECT * FROM expenses WHERE category=%s ORDER BY date DESC, time DESC", (category_filter,))
+        cursor.execute("SELECT * FROM expenses WHERE category=? ORDER BY date DESC, time DESC", (category_filter,))
     else:
         cursor.execute("SELECT * FROM expenses ORDER BY date DESC, time DESC")
     
@@ -645,17 +691,17 @@ def get_expenses_summary():
     date_filter = request.args.get('date', '').strip()
     
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor = conn.cursor()
     
     if date_filter:
-        cursor.execute("SELECT SUM(amount) as total_expenses FROM expenses WHERE date=%s", (date_filter,))
+        cursor.execute("SELECT SUM(amount) as total_expenses FROM expenses WHERE date=?", (date_filter,))
     else:
         cursor.execute("SELECT SUM(amount) as total_expenses FROM expenses")
     
     result = cursor.fetchone()
     
     if date_filter:
-        cursor.execute("SELECT category, SUM(amount) as total FROM expenses WHERE date=%s GROUP BY category ORDER BY total DESC",
+        cursor.execute("SELECT category, SUM(amount) as total FROM expenses WHERE date=? GROUP BY category ORDER BY total DESC",
                       (date_filter,))
     else:
         cursor.execute("SELECT category, SUM(amount) as total FROM expenses GROUP BY category ORDER BY total DESC")
@@ -671,15 +717,15 @@ def get_expenses_summary():
 @app.route('/api/delete-expense/<int:expense_id>', methods=['DELETE'])
 def delete_expense(expense_id):
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM expenses WHERE id=%s", (expense_id,))
+    cursor.execute("SELECT * FROM expenses WHERE id=?", (expense_id,))
     expense = cursor.fetchone()
     
     if not expense:
         return jsonify({'success': False, 'error': 'Expense not found'}), 404
     
-    cursor.execute("DELETE FROM expenses WHERE id=%s", (expense_id,))
+    cursor.execute("DELETE FROM expenses WHERE id=?", (expense_id,))
     conn.commit()
     conn.close()
     
@@ -688,10 +734,10 @@ def delete_expense(expense_id):
 @app.route('/api/delete-sale/<sale_num>', methods=['DELETE'])
 def delete_sale(sale_num):
     conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor = conn.cursor()
     
     # Get sale details before deleting
-    cursor.execute("SELECT * FROM sales WHERE sale_num=%s", (sale_num,))
+    cursor.execute("SELECT * FROM sales WHERE sale_num=?", (sale_num,))
     sale = cursor.fetchone()
     
     if not sale:
@@ -699,7 +745,7 @@ def delete_sale(sale_num):
     
     try:
         # Get all items in this sale to reverse inventory
-        cursor.execute("SELECT * FROM sale_items WHERE sale_num=%s", (sale_num,))
+        cursor.execute("SELECT * FROM sale_items WHERE sale_num=?", (sale_num,))
         items = [dict(row) for row in cursor.fetchall()]
         
         # Reverse the inventory for each item
@@ -707,21 +753,21 @@ def delete_sale(sale_num):
             item_name = item['item_name']
             quantity = item['quantity']
             
-            cursor.execute("SELECT quantity FROM products WHERE name=%s", (item_name,))
+            cursor.execute("SELECT quantity FROM products WHERE name=?", (item_name,))
             product = cursor.fetchone()
             
             if product:
                 new_qty = product['quantity'] + quantity
-                cursor.execute("UPDATE products SET quantity=%s WHERE name=%s", (new_qty, item_name))
+                cursor.execute("UPDATE products SET quantity=? WHERE name=?", (new_qty, item_name))
         
         # Delete sale items
-        cursor.execute("DELETE FROM sale_items WHERE sale_num=%s", (sale_num,))
+        cursor.execute("DELETE FROM sale_items WHERE sale_num=?", (sale_num,))
         
         # Delete the sale
-        cursor.execute("DELETE FROM sales WHERE sale_num=%s", (sale_num,))
+        cursor.execute("DELETE FROM sales WHERE sale_num=?", (sale_num,))
         
         # Delete related transactions (Supply type)
-        cursor.execute("DELETE FROM transactions WHERE type='Supply' AND item_name IN (SELECT item_name FROM sale_items WHERE sale_num=%s)", (sale_num,))
+        cursor.execute("DELETE FROM transactions WHERE type='Supply' AND item_name IN (SELECT item_name FROM sale_items WHERE sale_num=?)", (sale_num,))
         
         conn.commit()
         conn.close()
@@ -730,6 +776,254 @@ def delete_sale(sale_num):
     except Exception as e:
         conn.close()
         return jsonify({'success': False, 'error': str(e)}), 400
+
+
+# --- USER MANAGEMENT ROUTES ---
+@app.route('/api/users', methods=['GET'])
+@admin_required
+def get_users():
+    """Get all users (admin only)"""
+    conn = get_db_connection()
+    users = conn.execute('SELECT id, username, full_name, email, role, created_at, is_active FROM users ORDER BY created_at DESC').fetchall()
+    conn.close()
+    
+    return jsonify({
+        'success': True,
+        'users': [dict(user) for user in users]
+    })
+
+@app.route('/api/users', methods=['POST'])
+@admin_required
+def create_user():
+    """Create new user (admin only)"""
+    data = request.json
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    full_name = data.get('full_name', '').strip()
+    email = data.get('email', '').strip()
+    role = data.get('role', 'staff')
+    
+    if not username or not password:
+        return jsonify({'success': False, 'error': 'Username and password required'}), 400
+    
+    if role not in ['admin', 'manager', 'staff']:
+        return jsonify({'success': False, 'error': 'Invalid role'}), 400
+    
+    conn = get_db_connection()
+    try:
+        password_hash = generate_password_hash(password)
+        created_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        conn.execute("""INSERT INTO users (username, password_hash, full_name, email, role, created_at, is_active)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (username, password_hash, full_name, email, role, created_at, 1))
+        conn.commit()
+        
+        user_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        conn.close()
+        
+        return jsonify({
+            'success': True,
+            'message': 'User created successfully',
+            'user_id': user_id
+        })
+    except sqlite3.IntegrityError:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Username already exists'}), 400
+    except Exception as e:
+        conn.close()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/users/<int:user_id>', methods=['PUT'])
+@admin_required
+def update_user(user_id):
+    """Update user details (admin only)"""
+    data = request.json
+    full_name = data.get('full_name')
+    email = data.get('email')
+    role = data.get('role')
+    
+    if role and role not in ['admin', 'manager', 'staff']:
+        return jsonify({'success': False, 'error': 'Invalid role'}), 400
+    
+    conn = get_db_connection()
+    try:
+        updates = []
+        params = []
+        
+        if full_name is not None:
+            updates.append('full_name = ?')
+            params.append(full_name)
+        if email is not None:
+            updates.append('email = ?')
+            params.append(email)
+        if role is not None:
+            updates.append('role = ?')
+            params.append(role)
+        
+        if not updates:
+            conn.close()
+            return jsonify({'success': False, 'error': 'No fields to update'}), 400
+        
+        params.append(user_id)
+        query = f"UPDATE users SET {', '.join(updates)} WHERE id = ?"
+        conn.execute(query, params)
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': 'User updated successfully'})
+    except Exception as e:
+        conn.close()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/users/<int:user_id>/toggle-active', methods=['POST'])
+@admin_required
+def toggle_user_active(user_id):
+    """Enable/disable user account (admin only)"""
+    # Prevent deactivating yourself
+    if user_id == session.get('user_id'):
+        return jsonify({'success': False, 'error': 'Cannot deactivate your own account'}), 400
+    
+    conn = get_db_connection()
+    try:
+        user = conn.execute('SELECT is_active FROM users WHERE id = ?', (user_id,)).fetchone()
+        if not user:
+            conn.close()
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+        
+        new_status = 0 if user['is_active'] else 1
+        conn.execute('UPDATE users SET is_active = ? WHERE id = ?', (new_status, user_id))
+        conn.commit()
+        conn.close()
+        
+        status_text = 'activated' if new_status else 'deactivated'
+        return jsonify({'success': True, 'message': f'User {status_text} successfully'})
+    except Exception as e:
+        conn.close()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/users/<int:user_id>/change-password', methods=['POST'])
+@login_required
+def change_password(user_id):
+    """Change user password"""
+    data = request.json
+    current_password = data.get('current_password', '')
+    new_password = data.get('new_password', '')
+    
+    # Users can only change their own password, unless they're admin
+    if user_id != session.get('user_id'):
+        conn = get_db_connection()
+        user = conn.execute('SELECT role FROM users WHERE id = ?', (session['user_id'],)).fetchone()
+        conn.close()
+        if not user or user['role'] != 'admin':
+            return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+    
+    if not new_password or len(new_password) < 6:
+        return jsonify({'success': False, 'error': 'Password must be at least 6 characters'}), 400
+    
+    conn = get_db_connection()
+    try:
+        user = conn.execute('SELECT password_hash FROM users WHERE id = ?', (user_id,)).fetchone()
+        if not user:
+            conn.close()
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+        
+        # Verify current password if changing own password
+        if user_id == session.get('user_id'):
+            if not current_password or not check_password_hash(user['password_hash'], current_password):
+                conn.close()
+                return jsonify({'success': False, 'error': 'Current password is incorrect'}), 401
+        
+        new_hash = generate_password_hash(new_password)
+        conn.execute('UPDATE users SET password_hash = ? WHERE id = ?', (new_hash, user_id))
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': 'Password changed successfully'})
+    except Exception as e:
+        conn.close()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/users/<int:user_id>', methods=['DELETE'])
+@admin_required
+def delete_user(user_id):
+    """Delete user (admin only)"""
+    # Prevent deleting yourself
+    if user_id == session.get('user_id'):
+        return jsonify({'success': False, 'error': 'Cannot delete your own account'}), 400
+    
+    conn = get_db_connection()
+    try:
+        conn.execute('DELETE FROM users WHERE id = ?', (user_id,))
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': 'User deleted successfully'})
+    except Exception as e:
+        conn.close()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/login')
+def login_page():
+    if 'user_id' in session:
+        return redirect(url_for('index'))
+    return render_template('login.html')
+
+@app.route('/api/login', methods=['POST'])
+def api_login():
+    data = request.json
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    
+    if not username or not password:
+        return jsonify({'success': False, 'error': 'Username and password required'}), 400
+    
+    conn = get_db_connection()
+    user = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+    conn.close()
+    
+    if not user:
+        return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
+    
+    if not user['is_active']:
+        return jsonify({'success': False, 'error': 'Account is disabled'}), 401
+    
+    if not check_password_hash(user['password_hash'], password):
+        return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
+    
+    # Set session
+    session['user_id'] = user['id']
+    session['username'] = user['username']
+    session['role'] = user['role']
+    session['full_name'] = user['full_name']
+    
+    return jsonify({
+        'success': True,
+        'user': {
+            'id': user['id'],
+            'username': user['username'],
+            'full_name': user['full_name'],
+            'role': user['role']
+        }
+    })
+
+@app.route('/api/logout', methods=['POST'])
+def api_logout():
+    session.clear()
+    return jsonify({'success': True})
+
+@app.route('/api/current-user')
+@login_required
+def current_user():
+    return jsonify({
+        'success': True,
+        'user': {
+            'id': session.get('user_id'),
+            'username': session.get('username'),
+            'full_name': session.get('full_name'),
+            'role': session.get('role')
+        }
+    })
 
 if __name__ == '__main__':
     app.run(debug=True)
