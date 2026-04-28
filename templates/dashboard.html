@@ -40,7 +40,7 @@
                 </a>
                 <a href="#" class="nav-item" data-page="sales">
                     <i class="fas fa-shopping-cart"></i>
-                    <span>Sales & Credit</span>
+                    <span>Point of Sale</span>
                 </a>
                 <a href="#" class="nav-item" data-page="expenses">
                     <i class="fas fa-receipt"></i>
@@ -58,18 +58,30 @@
             <!-- Header -->
             <header class="header">
                 <div class="header-left">
-                    <i class="fas fa-bars mobile-toggle" id="mobileToggle"></i>
-                    <h1>Inventory Management System</h1>
+                    <button class="sidebar-toggle" id="sidebarToggle" title="Toggle Sidebar">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <button class="mobile-toggle" id="mobileToggle" title="Menu" style="background:none;border:none;">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <div class="logo-mobile" style="display: none;">
+                        <i class="fas fa-box"></i>
+                    </div>
+                    <h1>Inverntory Pro</h1>
                 </div>
                 <div class="header-right">
                     <div id="syncStatus" class="sync-status"></div>
-                    <div class="user-menu" style="display: inline-block; margin-left: 15px;">
-                        <span id="currentUser" style="font-weight: 600; margin-right: 10px;"></span>
-                        <button id="logoutBtn" class="btn btn-small btn-danger" style="padding: 5px 10px;">
+                    <div class="user-menu">
+                        <div class="user-avatar" id="userAvatar">U</div>
+                        <span id="currentUser" class="current-user-name"></span>
+                        <button id="logoutBtn" class="btn-logout" title="Logout">
                             <i class="fas fa-sign-out-alt"></i>
                         </button>
                     </div>
-                    <span class="date-time" id="dateTime"></span>
+                    <div class="date-time">
+                        <i class="far fa-calendar-alt"></i>
+                        <span id="dateTime"></span>
+                    </div>
                 </div>
             </header>
 
@@ -224,6 +236,7 @@
                         <table>
                             <thead>
                                 <tr>
+                                    <th>S/N</th>
                                     <th>Item Name</th>
                                     <th>Brand</th>
                                     <th>Available Stock</th>
@@ -389,10 +402,10 @@
                 </div>
             </section>
 
-            <!-- Sales & Credit Page -->
+            <!-- Point of Sale (POS) Page -->
             <section id="sales" class="page">
                 <div class="page-header">
-                    <h2>Sales & Credit Management</h2>
+                    <h2>Point of Sale (POS)</h2>
                 </div>
 
                 <div class="sales-container">
@@ -485,7 +498,7 @@
 
                     <!-- Sales History -->
                     <div class="card">
-                        <h3>Sales History</h3>
+                        <h3>Transaction History</h3>
                         <div class="filter-group">
                             <input type="date" id="salesHistoryDate" class="filter-input">
                             <input type="text" id="searchCustomer" placeholder="Search by customer..."
@@ -513,7 +526,7 @@
                     </div>
                 </div>
 
-                <!-- Sales Records -->
+                <!-- POS Records -->
                 <div class="card" style="margin-top: 20px;">
                     <h3>Sales & Credit Records</h3>
                     <div class="filter-group">
@@ -644,7 +657,6 @@
                     </div>
                 </div>
             </section>
-    </div>
 
     <!-- Modal for updating reorder level -->
     <div id="reorderModal" class="modal">
@@ -717,22 +729,6 @@
         </div>
     </div>
 
-    <!-- Notification Toast -->
-    <div id="notification" class="notification"></div>
-
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
-    <script>
-        // Register Service Worker for offline functionality
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/static/service-worker.js')
-                .then(registration => {
-                    console.log('Service Worker registered successfully:', registration);
-                })
-                .catch(error => {
-                    console.log('Service Worker registration failed:', error);
-                });
-        }
-    </script>
     <!-- Admin Page -->
     <section id="admin" class="page">
         <div class="page-header">
@@ -763,7 +759,6 @@
             </div>
         </div>
     </section>
-    </main>
 
     <!-- Add User Modal -->
     <div id="addUserModal" class="modal">
@@ -802,6 +797,54 @@
             </form>
         </div>
     </div>
+    </main>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="notification" class="notification"></div>
+
+    <!-- Bottom Navigation (Mobile Only) -->
+    <nav class="bottom-nav">
+        <a href="#" class="bottom-nav-item active" data-page="dashboard">
+            <i class="fas fa-chart-pie"></i>
+            <span>Home</span>
+        </a>
+        <a href="#" class="bottom-nav-item" data-page="inventory">
+            <i class="fas fa-boxes"></i>
+            <span>Stock</span>
+        </a>
+        <a href="#" class="bottom-nav-item" data-page="sales">
+            <i class="fas fa-shopping-cart"></i>
+            <span>POS</span>
+        </a>
+        <a href="#" class="bottom-nav-item" data-page="expenses">
+            <i class="fas fa-receipt"></i>
+            <span>Expenses</span>
+        </a>
+        <a href="#" class="bottom-nav-item" id="moreMobileNav">
+            <i class="fas fa-ellipsis-h"></i>
+            <span>More</span>
+        </a>
+    </nav>
+
+    <!-- Floating Action Button (Mobile Only) -->
+    <button class="fab" id="mainFab" title="Record New Entry">
+        <i class="fas fa-plus"></i>
+    </button>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script>
+        // Register Service Worker for offline functionality
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/static/service-worker.js')
+                .then(registration => {
+                    console.log('Service Worker registered successfully:', registration);
+                })
+                .catch(error => {
+                    console.log('Service Worker registration failed:', error);
+                });
+        }
+    </script>
 </body>
 
 </html>

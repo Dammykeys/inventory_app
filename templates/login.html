@@ -4,71 +4,88 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Inventory Management</title>
+    <title>Login - Inventory Pro</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --primary-color: #6366f1;
+            --primary-dark: #4f46e5;
+            --secondary-color: #10b981;
+            --dark-bg: #0f172a;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --radius: 1rem;
+            --shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+        }
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-        }
-
-        :root {
-            --primary-color: #2c3e50;
-            --secondary-color: #3498db;
-            --success-color: #27ae60;
-            --danger-color: #e74c3c;
-            --warning-color: #f39c12;
-            --light-bg: #ecf0f1;
-            --dark-bg: #34495e;
-            --text-primary: #2c3e50;
-            --text-secondary: #7f8c8d;
+            font-family: 'Outfit', sans-serif;
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+            background-color: var(--dark-bg);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 0%, rgba(16, 185, 129, 0.1) 0px, transparent 50%);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
+            padding: 1.5rem;
         }
 
-        .login-container {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
-            padding: 3rem;
+        .login-card {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 1.5rem;
+            padding: 2.5rem;
             width: 100%;
-            max-width: 420px;
-            animation: slideUp 0.5s ease-out;
+            max-width: 440px;
+            box-shadow: var(--shadow);
+            animation: fadeIn 0.6s ease-out;
         }
 
-        @keyframes slideUp {
-            from {
-                opacity: 0;
-                transform: translateY(30px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
-        .login-header {
+        .logo-section {
             text-align: center;
-            margin-bottom: 2rem;
+            margin-bottom: 2.5rem;
         }
 
-        .login-header h1 {
-            color: var(--primary-color);
+        .logo-icon {
+            width: 4rem;
+            height: 4rem;
+            background: var(--primary-color);
+            color: white;
+            border-radius: 1rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
             font-size: 2rem;
-            margin-bottom: 0.5rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.4);
         }
 
-        .login-header p {
+        .logo-section h1 {
+            color: white;
+            font-size: 1.75rem;
+            font-weight: 700;
+            letter-spacing: -0.025em;
+        }
+
+        .logo-section p {
             color: var(--text-secondary);
-            font-size: 0.95rem;
+            font-size: 0.875rem;
+            margin-top: 0.5rem;
         }
 
         .form-group {
@@ -78,129 +95,126 @@
         .form-group label {
             display: block;
             margin-bottom: 0.5rem;
-            color: var(--text-primary);
+            color: #94a3b8;
             font-weight: 500;
-            font-size: 0.95rem;
+            font-size: 0.875rem;
+        }
+
+        .input-wrapper {
+            position: relative;
+        }
+
+        .input-wrapper i {
+            position: absolute;
+            left: 1rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #64748b;
         }
 
         .form-group input {
             width: 100%;
-            padding: 0.75rem 1rem;
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
+            padding: 0.875rem 1rem 0.875rem 2.75rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 0.75rem;
+            color: white;
             font-size: 1rem;
-            transition: all 0.3s ease;
+            transition: all 0.2s ease;
             outline: none;
         }
 
         .form-group input:focus {
-            border-color: var(--secondary-color);
-            box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+            border-color: var(--primary-color);
+            background: rgba(255, 255, 255, 0.08);
+            box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15);
+        }
+
+        .password-toggle {
+            position: absolute;
+            right: 1rem;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: #64748b;
+            cursor: pointer;
+            font-size: 0.875rem;
         }
 
         .login-btn {
             width: 100%;
-            padding: 0.75rem;
-            background: var(--secondary-color);
+            padding: 0.875rem;
+            background: var(--primary-color);
             color: white;
             border: none;
-            border-radius: 8px;
+            border-radius: 0.75rem;
             font-size: 1rem;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
             margin-top: 1rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         }
 
         .login-btn:hover {
-            background: #2980b9;
+            background: var(--primary-dark);
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);
+            box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.4);
         }
 
         .login-btn:active {
             transform: translateY(0);
         }
 
-        .login-btn:disabled {
-            background: #95a5a6;
-            cursor: not-allowed;
-            transform: none;
-        }
-
         .alert {
-            padding: 0.75rem 1rem;
-            border-radius: 8px;
+            padding: 1rem;
+            border-radius: 0.75rem;
             margin-bottom: 1.5rem;
+            font-size: 0.875rem;
             display: none;
+            border: 1px solid transparent;
         }
 
         .alert.show {
             display: block;
-            animation: fadeIn 0.3s ease;
+            animation: shake 0.4s ease-in-out;
         }
 
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-            }
-
-            to {
-                opacity: 1;
-            }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
         }
 
         .alert-error {
-            background: #fadbd8;
-            color: #c0392b;
-            border-left: 4px solid var(--danger-color);
+            background: rgba(244, 63, 94, 0.1);
+            color: #fb7185;
+            border-color: rgba(244, 63, 94, 0.2);
         }
 
         .alert-success {
-            background: #d5f4e6;
-            color: #229954;
-            border-left: 4px solid var(--success-color);
-        }
-
-        .password-toggle {
-            position: relative;
-        }
-
-        .password-toggle-btn {
-            position: absolute;
-            right: 12px;
-            top: 50%;
-            transform: translateY(-50%);
-            background: none;
-            border: none;
-            color: var(--text-secondary);
-            cursor: pointer;
-            font-size: 0.9rem;
-            padding: 0.25rem 0.5rem;
-        }
-
-        .password-toggle-btn:hover {
-            color: var(--secondary-color);
+            background: rgba(16, 185, 129, 0.1);
+            color: #34d399;
+            border-color: rgba(16, 185, 129, 0.2);
         }
 
         @media (max-width: 480px) {
-            .login-container {
+            .login-card {
                 padding: 2rem 1.5rem;
-                margin: 1rem;
-            }
-
-            .login-header h1 {
-                font-size: 1.75rem;
             }
         }
     </style>
 </head>
 
 <body>
-    <div class="login-container">
-        <div class="login-header">
-            <h1>📦 Inventory System</h1>
-            <p>Sign in to continue</p>
+    <div class="login-card">
+        <div class="logo-section">
+            <div class="logo-icon">
+                <i class="fas fa-box"></i>
+            </div>
+            <h1>Inventory Pro</h1>
+            <p>Welcome back, please sign in</p>
         </div>
 
         <div id="alert" class="alert"></div>
@@ -208,18 +222,26 @@
         <form id="loginForm">
             <div class="form-group">
                 <label for="username">Username</label>
-                <input type="text" id="username" name="username" required autocomplete="username" autofocus>
+                <div class="input-wrapper">
+                    <i class="fas fa-user"></i>
+                    <input type="text" id="username" name="username" placeholder="Enter username" required autofocus>
+                </div>
             </div>
 
             <div class="form-group">
                 <label for="password">Password</label>
-                <div class="password-toggle">
-                    <input type="password" id="password" name="password" required autocomplete="current-password">
-                    <button type="button" class="password-toggle-btn" id="togglePassword">Show</button>
+                <div class="input-wrapper">
+                    <i class="fas fa-lock"></i>
+                    <input type="password" id="password" name="password" placeholder="Enter password" required>
+                    <button type="button" class="password-toggle" id="togglePassword">
+                        <i class="fas fa-eye"></i>
+                    </button>
                 </div>
             </div>
 
-            <button type="submit" class="login-btn" id="loginBtn">Sign In</button>
+            <button type="submit" class="login-btn" id="loginBtn">
+                <span>Sign In</span>
+            </button>
         </form>
     </div>
 
@@ -230,14 +252,12 @@
         const togglePasswordBtn = document.getElementById('togglePassword');
         const passwordInput = document.getElementById('password');
 
-        // Password toggle
         togglePasswordBtn.addEventListener('click', () => {
             const type = passwordInput.type === 'password' ? 'text' : 'password';
             passwordInput.type = type;
-            togglePasswordBtn.textContent = type === 'password' ? 'Show' : 'Hide';
+            togglePasswordBtn.innerHTML = type === 'password' ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
         });
 
-        // Show alert
         function showAlert(message, type = 'error') {
             alert.textContent = message;
             alert.className = `alert alert-${type} show`;
@@ -246,47 +266,35 @@
             }, 5000);
         }
 
-        // Handle login
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-
             const username = document.getElementById('username').value.trim();
             const password = document.getElementById('password').value;
 
-            if (!username || !password) {
-                showAlert('Please enter both username and password');
-                return;
-            }
-
             loginBtn.disabled = true;
-            loginBtn.textContent = 'Signing in...';
+            loginBtn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Processing...';
 
             try {
                 const response = await fetch('/api/login', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ username, password })
                 });
 
                 const data = await response.json();
 
                 if (data.success) {
-                    showAlert('Login successful! Redirecting...', 'success');
-                    setTimeout(() => {
-                        window.location.href = '/';
-                    }, 1000);
+                    showAlert('Login successful!', 'success');
+                    setTimeout(() => window.location.href = '/', 800);
                 } else {
-                    showAlert(data.error || 'Login failed');
+                    showAlert(data.error || 'Invalid credentials');
                     loginBtn.disabled = false;
-                    loginBtn.textContent = 'Sign In';
+                    loginBtn.innerHTML = 'Sign In';
                 }
             } catch (error) {
-                console.error('Login error:', error);
-                showAlert('An error occurred. Please try again.');
+                showAlert('Connection error. Please try again.');
                 loginBtn.disabled = false;
-                loginBtn.textContent = 'Sign In';
+                loginBtn.innerHTML = 'Sign In';
             }
         });
     </script>

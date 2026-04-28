@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (window.innerWidth <= 768 &&
             sidebar.classList.contains('active') &&
             !sidebar.contains(e.target) &&
-            e.target !== mobileToggle) {
+            (!mobileToggle || !mobileToggle.contains(e.target))) {
 
             sidebar.classList.remove('active');
             document.body.style.overflow = '';
@@ -39,12 +39,34 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    // Desktop sidebar toggle functionality
+    const sidebarToggle = document.getElementById('sidebarToggle');
+    if (sidebarToggle) {
+        sidebarToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('collapsed');
+            localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+        });
+    }
+
+    // Restore sidebar state
+    if (localStorage.getItem('sidebarCollapsed') === 'true' && window.innerWidth > 768) {
+        sidebar.classList.add('collapsed');
+    }
+
     // Handle window resize
     window.addEventListener('resize', () => {
         // Close mobile sidebar if window is resized to desktop size
         if (window.innerWidth > 768) {
             sidebar.classList.remove('active');
             document.body.style.overflow = '';
+            
+            // Re-apply collapsed state if it was saved
+            if (localStorage.getItem('sidebarCollapsed') === 'true') {
+                sidebar.classList.add('collapsed');
+            }
+        } else {
+            // Remove collapsed state on mobile
+            sidebar.classList.remove('collapsed');
         }
     });
 
@@ -198,16 +220,54 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Page Navigation
-document.querySelectorAll('.nav-item').forEach(item => {
-    item.addEventListener('click', (e) => {
-        e.preventDefault();
-        const pageName = item.getAttribute('data-page');
-        showPage(pageName);
-
-        document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
-        item.classList.add('active');
+function initializeNavigation() {
+    const navItems = document.querySelectorAll('.nav-item, .bottom-nav-item');
+    
+    navItems.forEach(item => {
+        item.addEventListener('click', (e) => {
+            e.preventDefault();
+            const pageName = item.getAttribute('data-page');
+            if (pageName) {
+                showPage(pageName);
+                
+                // Update active state for both navs
+                document.querySelectorAll('.nav-item, .bottom-nav-item').forEach(nav => {
+                    nav.classList.remove('active');
+                    if (nav.getAttribute('data-page') === pageName) {
+                        nav.classList.add('active');
+                    }
+                });
+            }
+        });
     });
-});
+
+    // FAB Action
+    const mainFab = document.getElementById('mainFab');
+    if (mainFab) {
+        mainFab.addEventListener('click', () => {
+            showPage('entry');
+            // Update active state
+            document.querySelectorAll('.nav-item, .bottom-nav-item').forEach(nav => {
+                nav.classList.remove('active');
+                if (nav.getAttribute('data-page') === 'entry') {
+                    nav.classList.add('active');
+                }
+            });
+        });
+    }
+
+    // More menu for mobile
+    const moreMobileNav = document.getElementById('moreMobileNav');
+    if (moreMobileNav) {
+        moreMobileNav.addEventListener('click', (e) => {
+            e.preventDefault();
+            const sidebar = document.querySelector('.sidebar');
+            sidebar.classList.toggle('active');
+        });
+    }
+}
+
+initializeNavigation();
 
 // Dashboard date filter
 document.getElementById('dashboardDateFilter').addEventListener('change', () => {
@@ -586,8 +646,9 @@ async function loadInventory() {
         updateItemSuggestions(products);
 
         const table = document.getElementById('inventoryTable');
-        table.innerHTML = products.map(item => `
+        table.innerHTML = products.map((item, index) => `
             <tr>
+                <td>${index + 1}</td>
                 <td>${item.name}</td>
                 <td>${item.brand || '-'}</td>
                 <td>${item.quantity}</td>
@@ -626,8 +687,9 @@ async function loadInventory() {
 
         const table = document.getElementById('inventoryTable');
         if (products.length > 0) {
-            table.innerHTML = products.map(item => `
+            table.innerHTML = products.map((item, index) => `
                 <tr>
+                    <td>${index + 1}</td>
                     <td>${item.name}</td>
                     <td>${item.brand || '-'}</td>
                     <td>${item.quantity}</td>
@@ -914,6 +976,11 @@ async function checkLoginStatus() {
             // Show admin links if admin
             if (user.role === 'admin') {
                 document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
+            }
+            // Set avatar initial
+            const avatar = document.getElementById('userAvatar');
+            if (avatar && user.username) {
+                avatar.textContent = user.username.charAt(0).toUpperCase();
             }
         } else {
             // Not logged in, redirect to login
