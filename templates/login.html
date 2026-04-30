@@ -204,6 +204,96 @@
                 padding: 2rem 1.5rem;
             }
         }
+
+        /* --- MODAL SYSTEM --- */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.show {
+            display: flex;
+            opacity: 1;
+        }
+
+        .modal-content {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 1.5rem;
+            width: 90%;
+            max-width: 400px;
+            padding: 2.5rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            transform: scale(0.9) translateY(20px);
+            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+            position: relative;
+            text-align: center;
+        }
+
+        .modal.show .modal-content {
+            transform: scale(1) translateY(0);
+        }
+
+        .modal-icon {
+            width: 72px;
+            height: 72px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.25rem;
+            margin: 0 auto 1.5rem;
+        }
+
+        .modal-success .modal-icon { background: #d1fae5; color: #10b981; }
+        .modal-error .modal-icon { background: #fee2e2; color: #f43f5e; }
+
+        .modal h2 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 0.75rem;
+            color: #1e293b;
+        }
+
+        .modal p {
+            color: #64748b;
+            font-size: 1rem;
+            line-height: 1.6;
+            margin-bottom: 2rem;
+        }
+
+        .modal-btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.75rem;
+            font-weight: 600;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
+            min-width: 120px;
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .modal-btn:hover {
+            background: var(--primary-dark);
+            transform: translateY(-2px);
+        }
+
     </style>
 </head>
 
@@ -245,6 +335,19 @@
         </form>
     </div>
 
+    <!-- Universal Alert Modal -->
+    <div id="alertModal" class="modal">
+        <div class="modal-content">
+            <div id="alertModalIcon" class="modal-icon"></div>
+            <h2 id="alertModalTitle">Notification</h2>
+            <p id="alertModalMessage"></p>
+            <div class="modal-actions">
+                <button onclick="closeAlertModal()" class="modal-btn">OK</button>
+            </div>
+        </div>
+    </div>
+
+
     <script>
         const loginForm = document.getElementById('loginForm');
         const loginBtn = document.getElementById('loginBtn');
@@ -259,12 +362,24 @@
         });
 
         function showAlert(message, type = 'error') {
-            alert.textContent = message;
-            alert.className = `alert alert-${type} show`;
-            setTimeout(() => {
-                alert.classList.remove('show');
-            }, 5000);
+            const modal = document.getElementById('alertModal');
+            const icon = document.getElementById('alertModalIcon');
+            const titleEl = document.getElementById('alertModalTitle');
+            const messageEl = document.getElementById('alertModalMessage');
+            
+            titleEl.textContent = type === 'success' ? 'Success' : 'Attention';
+            messageEl.textContent = message;
+            
+            modal.className = `modal modal-${type}`;
+            icon.innerHTML = type === 'success' ? '<i class="fas fa-check-circle"></i>' : '<i class="fas fa-exclamation-circle"></i>';
+            
+            modal.classList.add('show');
         }
+
+        function closeAlertModal() {
+            document.getElementById('alertModal').classList.remove('show');
+        }
+
 
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();

@@ -174,6 +174,7 @@
                             <table>
                                 <thead>
                                     <tr>
+                                        <th>S/N</th>
                                         <th>Item Name</th>
                                         <th>Stock</th>
                                         <th>Reorder Level</th>
@@ -191,6 +192,7 @@
                             <table>
                                 <thead>
                                     <tr>
+                                        <th>S/N</th>
                                         <th>Item</th>
                                         <th>Quantity</th>
                                         <th>Type</th>
@@ -210,6 +212,7 @@
                         <table>
                             <thead>
                                 <tr>
+                                    <th>S/N</th>
                                     <th>Sale No</th>
                                     <th>Customer</th>
                                     <th>Date</th>
@@ -262,6 +265,7 @@
                         <table>
                             <thead>
                                 <tr>
+                                    <th>S/N</th>
                                     <th>Date</th>
                                     <th>Time</th>
                                     <th>Item</th>
@@ -358,6 +362,7 @@
                         <table>
                             <thead>
                                 <tr>
+                                    <th>S/N</th>
                                     <th>Date</th>
                                     <th>Time</th>
                                     <th>Item</th>
@@ -477,7 +482,7 @@
                                 <div class="summary-box">
                                     <div class="summary-row">
                                         <span>Items:</span>
-                                        <span id="totalItems">0</span>
+                                        <span id="posTotalItems">0</span>
                                     </div>
                                     <div class="summary-row">
                                         <span>Quantity:</span>
@@ -511,6 +516,7 @@
                             <table>
                                 <thead>
                                     <tr>
+                                        <th>S/N</th>
                                         <th>Sale No</th>
                                         <th>Customer</th>
                                         <th>Date</th>
@@ -539,6 +545,7 @@
                         <table>
                             <thead>
                                 <tr>
+                                    <th>S/N</th>
                                     <th>Sale No</th>
                                     <th>Customer</th>
                                     <th>Date</th>
@@ -624,7 +631,7 @@
                         <div class="summary-box">
                             <div class="summary-row total">
                                 <span>Total Expenses:</span>
-                                <span id="totalExpenses">₦0.00</span>
+                                <span id="expensesTotalAmount">₦0.00</span>
                             </div>
                         </div>
 
@@ -643,6 +650,7 @@
                         <table>
                             <thead>
                                 <tr>
+                                    <th>S/N</th>
                                     <th>Date</th>
                                     <th>Description</th>
                                     <th>Category</th>
@@ -661,15 +669,20 @@
     <!-- Modal for updating reorder level -->
     <div id="reorderModal" class="modal">
         <div class="modal-content">
-            <span class="close">&times;</span>
+            <span class="close" onclick="closeReorderModal()">&times;</span>
+            <div class="modal-icon"><i class="fas fa-sync-alt"></i></div>
             <h2>Update Reorder Level</h2>
+            <p>Set a new threshold for low stock alerts.</p>
             <form id="quickReorderForm">
                 <input type="hidden" id="quickReorderItem">
-                <div class="form-group">
-                    <label for="quickReorderLevel">Reorder Level</label>
-                    <input type="number" id="quickReorderLevel" min="0" required>
+                <div class="form-group" style="text-align: left;">
+                    <label for="quickReorderLevel">New Reorder Level</label>
+                    <input type="number" id="quickReorderLevel" min="0" required placeholder="Enter quantity">
                 </div>
-                <button type="submit" class="btn btn-primary">Update</button>
+                <div class="modal-actions">
+                    <button type="submit" class="btn btn-primary">Update Level</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeReorderModal()">Cancel</button>
+                </div>
             </form>
         </div>
     </div>
@@ -677,23 +690,26 @@
     <!-- Confirmation Modal -->
     <div id="confirmModal" class="modal">
         <div class="modal-content">
-            <h2>Confirm Deletion</h2>
-            <p id="confirmMessage">Are you sure you want to delete this item?</p>
+            <div class="modal-icon" style="background: #fee2e2; color: #f43f5e;"><i class="fas fa-exclamation-triangle"></i></div>
+            <h2>Confirm Action</h2>
+            <p id="confirmMessage">Are you sure you want to perform this action? This cannot be undone.</p>
             <div class="modal-actions">
-                <button id="confirmBtn" class="btn btn-danger">Delete</button>
-                <button id="cancelBtn" class="btn btn-secondary">Cancel</button>
+                <button id="confirmBtn" class="modal-btn modal-btn-danger">Yes, Delete</button>
+                <button id="cancelBtn" class="modal-btn modal-btn-secondary">No, Keep it</button>
             </div>
         </div>
     </div>
 
     <!-- Sale Details Modal -->
     <div id="saleDetailsModal" class="modal">
-        <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-content" style="max-width: 650px; text-align: left;">
             <span class="close" onclick="closeSaleDetailsModal()">&times;</span>
-            <h2>Sale Details</h2>
-            <div id="saleDetailsContent">
+            <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem;">
+                <div class="modal-icon" style="margin: 0; width: 50px; height: 50px; font-size: 1.5rem;"><i class="fas fa-receipt"></i></div>
+                <h2 style="margin: 0;">Sale Details</h2>
             </div>
-            <div class="modal-actions" style="margin-top: 20px;">
+            <div id="saleDetailsContent" style="margin-bottom: 2rem;"></div>
+            <div class="modal-actions" style="justify-content: flex-start;">
                 <button class="btn btn-primary" onclick="downloadSaleInvoice()">
                     <i class="fas fa-file-pdf"></i> Download Invoice
                 </button>
@@ -709,9 +725,11 @@
     <div id="updateStatusModal" class="modal">
         <div class="modal-content" style="max-width: 400px;">
             <span class="close" onclick="closeUpdateStatusModal()">&times;</span>
-            <h2>Update Payment Status</h2>
+            <div class="modal-icon"><i class="fas fa-money-check-alt"></i></div>
+            <h2>Update Status</h2>
+            <p>Update the payment status for this transaction.</p>
             <form id="updateStatusForm">
-                <div class="form-group">
+                <div class="form-group" style="text-align: left;">
                     <label for="statusSelect">Payment Status <span class="required">*</span></label>
                     <select id="statusSelect" required>
                         <option value="">Select Status</option>
@@ -722,7 +740,7 @@
                     </select>
                 </div>
                 <div class="modal-actions">
-                    <button type="submit" class="btn btn-primary">Update</button>
+                    <button type="submit" class="btn btn-primary">Save Status</button>
                     <button type="button" class="btn btn-secondary" onclick="closeUpdateStatusModal()">Cancel</button>
                 </div>
             </form>
@@ -733,9 +751,12 @@
     <section id="admin" class="page">
         <div class="page-header">
             <h2>User Management</h2>
-            <button class="btn btn-primary" onclick="openAddUserModal()">
-                <i class="fas fa-user-plus"></i> Add User
-            </button>
+            <div class="filter-group">
+                <input type="text" id="searchUsers" placeholder="Search users..." class="filter-input">
+                <button class="btn btn-primary" onclick="openAddUserModal()">
+                    <i class="fas fa-user-plus"></i> Add User
+                </button>
+            </div>
         </div>
 
         <div class="card">
@@ -744,6 +765,7 @@
                 <table>
                     <thead>
                         <tr>
+                            <th>S/N</th>
                             <th>Username</th>
                             <th>Full Name</th>
                             <th>Role</th>
@@ -758,45 +780,78 @@
                 </table>
             </div>
         </div>
+        <div class="card" style="margin-top: 2rem;">
+            <h3>System Activity Log</h3>
+            <div class="table-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>S/N</th>
+                            <th>User</th>
+                            <th>Action</th>
+                            <th>Details</th>
+                            <th>Timestamp</th>
+                        </tr>
+                    </thead>
+                    <tbody id="activityLogTable">
+                        <!-- Logs will be loaded here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </section>
 
     <!-- Add User Modal -->
     <div id="addUserModal" class="modal">
         <div class="modal-content">
             <span class="close" onclick="closeAddUserModal()">&times;</span>
+            <div class="modal-icon"><i class="fas fa-user-plus"></i></div>
             <h2>Add New User</h2>
-            <form id="addUserForm">
+            <p>Create a new account for your staff members.</p>
+            <form id="addUserForm" style="text-align: left;">
                 <div class="form-group">
                     <label for="newUsername">Username <span class="required">*</span></label>
-                    <input type="text" id="newUsername" required>
+                    <input type="text" id="newUsername" required placeholder="e.g. john_doe">
                 </div>
                 <div class="form-group">
                     <label for="newFullName">Full Name</label>
-                    <input type="text" id="newFullName">
+                    <input type="text" id="newFullName" placeholder="e.g. John Doe">
                 </div>
                 <div class="form-group">
                     <label for="newEmail">Email</label>
-                    <input type="email" id="newEmail">
+                    <input type="email" id="newEmail" placeholder="e.g. john@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="newRole">User Role</label>
+                    <select id="newRole">
+                        <option value="staff">Staff</option>
+                        <option value="admin">Administrator</option>
+                    </select>
                 </div>
                 <div class="form-group">
                     <label for="newPassword">Password <span class="required">*</span></label>
-                    <input type="password" id="newPassword" required>
+                    <input type="password" id="newPassword" required placeholder="Min 6 characters">
                 </div>
-                <div class="form-group">
-                    <label for="newRole">Role <span class="required">*</span></label>
-                    <select id="newRole" required>
-                        <option value="staff">Staff</option>
-                        <option value="manager">Manager</option>
-                        <option value="admin">Admin</option>
-                    </select>
-                </div>
-                <div class="modal-actions">
-                    <button type="submit" class="btn btn-primary">Create User</button>
+                <div class="modal-actions" style="margin-top: 2rem;">
+                    <button type="submit" class="btn btn-primary">Create Account</button>
                     <button type="button" class="btn btn-secondary" onclick="closeAddUserModal()">Cancel</button>
                 </div>
             </form>
         </div>
     </div>
+
+    <!-- Universal Alert Modal -->
+    <div id="alertModal" class="modal">
+        <div class="modal-content">
+            <div id="alertModalIcon" class="modal-icon"></div>
+            <h2 id="alertModalTitle">Notification</h2>
+            <p id="alertModalMessage"></p>
+            <div class="modal-actions">
+                <button onclick="closeAlertModal()" class="modal-btn modal-btn-primary">OK</button>
+            </div>
+        </div>
+    </div>
+
     </main>
     </div>
 

@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, jsonify, send_file, session, redirect, url_for
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from psycopg2 import pool
 import datetime
 import os
 from fpdf import FPDF
@@ -16,10 +17,17 @@ app = Flask(__name__)
 app.config['DATABASE_URL'] = os.environ.get('DATABASE_URL')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
-# --- DATABASE SETUP ---
+# Initialize Connection Pool
+db_pool = pool.ThreadedConnectionPool(
+    1, 20, # min, max connections
+    app.config['DATABASE_URL']
+)
+
 def get_db_connection():
-    conn = psycopg2.connect(app.config['DATABASE_URL'])
-    return conn
+    return db_pool.getconn()
+
+def release_db_connection(conn):
+    db_pool.putconn(conn)
 
 def init_db():
     conn = get_db_connection()
@@ -78,6 +86,14 @@ def init_db():
                        created_at TEXT,
                        is_active BOOLEAN DEFAULT TRUE)''')
 
+    cursor.execute('''CREATE TABLE IF NOT EXISTS activity_log 
+                      (id SERIAL PRIMARY KEY, 
+                       user_id INTEGER, 
+                       username TEXT, 
+                       action TEXT, 
+                       details TEXT, 
+                       timestamp TEXT)''')
+
     # Create default admin if not exists
     cursor.execute("SELECT * FROM users WHERE username=%s", ('admin',))
     if not cursor.fetchone():
@@ -88,11 +104,13 @@ def init_db():
                       ('admin', admin_hash, 'Administrator', 'admin@inventory.local', 'admin', created_at, True))
         print("Default admin account created.")
     
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sales_date ON sales (date)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses (date)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products (name)")
+    
     conn.commit()
-    conn.close()
-
-# Run init_db once
-init_db()
+    release_db_connection(conn)
 
 # --- AUTHENTICATION HELPERS ---
 def login_required(f):
@@ -115,12 +133,99 @@ def admin_required(f):
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute('SELECT role FROM users WHERE id = %s', (session['user_id'],))
         user = cursor.fetchone()
-        conn.close()
+        release_db_connection(conn)
         
         if not user or user['role'] != 'admin':
-            return jsonify({'success': False, 'error': 'Admin access required'}), 403
+            return jsonify({'success': False, 'error': 'Admin privileges required'}), 403
         return f(*args, **kwargs)
     return decorated_function
+
+# Run init_db once
+init_db()
+
+# --- ACTIVITY LOG HELPER ---
+def log_activity(action, details=""):
+    try:
+        user_id = session.get('user_id')
+        username = session.get('username', 'System')
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""INSERT INTO activity_log (user_id, username, action, details, timestamp) 
+                         VALUES (%s, %s, %s, %s, %s)""",
+                      (user_id, username, action, details, timestamp))
+        conn.commit()
+        release_db_connection(conn)
+    except Exception as e:
+        print(f"Error logging activity: {e}")
+
+@app.route('/api/backup/local', methods=['POST'])
+@admin_required
+def perform_local_backup():
+    """Backup all PostgreSQL data to a local SQLite database"""
+    try:
+        import sqlite3
+        sqlite_conn = sqlite3.connect('emergency_backup.db')
+        sqlite_cursor = sqlite_conn.cursor()
+        
+        pg_conn = get_db_connection()
+        pg_cursor = pg_conn.cursor(cursor_factory=RealDictCursor)
+        
+        tables = ['products', 'transactions', 'sales', 'sale_items', 'expenses', 'users', 'activity_log']
+        
+        for table in tables:
+            # Get data from Postgres
+            pg_cursor.execute(f"SELECT * FROM {table}")
+            rows = pg_cursor.fetchall()
+            
+            if not rows:
+                continue
+                
+            # Create table in SQLite (simplified)
+            columns = rows[0].keys()
+            col_types = ", ".join([f"{col} TEXT" for col in columns]) # Simplified to TEXT for backup
+            sqlite_cursor.execute(f"DROP TABLE IF EXISTS {table}")
+            sqlite_cursor.execute(f"CREATE TABLE {table} ({col_types})")
+            
+            # Insert data
+            placeholders = ", ".join(["?" for _ in columns])
+            insert_query = f"INSERT INTO {table} VALUES ({placeholders})"
+            
+            data_to_insert = [tuple(str(row[col]) if row[col] is not None else "" for col in columns) for row in rows]
+            sqlite_cursor.executemany(insert_query, data_to_insert)
+            
+        sqlite_conn.commit()
+        sqlite_conn.close()
+        pg_conn.close()
+        
+        log_activity('Local Backup', "Manual emergency backup to SQLite performed")
+        return jsonify({'success': True, 'message': 'Local emergency backup created successfully (emergency_backup.db)'})
+    except Exception as e:
+        print(f"Backup error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/activity-log')
+@login_required
+def get_activity_log():
+    # Only admins can see full activity log
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    
+    cursor.execute('SELECT role FROM users WHERE id = %s', (session['user_id'],))
+    user = cursor.fetchone()
+    
+    if not user or user['role'] != 'admin':
+        # Non-admins only see their own logs
+        cursor.execute('SELECT * FROM activity_log WHERE user_id = %s ORDER BY timestamp DESC LIMIT 100', (session['user_id'],))
+    else:
+        cursor.execute('SELECT * FROM activity_log ORDER BY timestamp DESC LIMIT 200')
+        
+    logs = cursor.fetchall()
+    release_db_connection(conn)
+    return jsonify({'success': True, 'logs': logs})
+
+# --- ROUTES ---
 
 
 
@@ -129,13 +234,122 @@ def admin_required(f):
 def index():
     return render_template('dashboard.html')
 
+@app.route('/api/dashboard-combined')
+@login_required
+def get_dashboard_combined():
+    date_filter = request.args.get('date', '').strip()
+    
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    
+    try:
+        print(f"DEBUG: Starting get_dashboard_combined. Date Filter: '{date_filter}'")
+        # 1. Aggregated Inventory Stats (Optimized: No more fetching entire table)
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as total_items,
+                SUM(CASE WHEN quantity <= reorder_level THEN 1 ELSE 0 END) as low_stock_count,
+                SUM(quantity) as total_units
+            FROM products
+        """)
+        inv_stats = cursor.fetchone()
+        print(f"DEBUG: Inv stats: {inv_stats}")
+        
+        # 2. Recent Low Stock Items (Limit to 10 for dashboard)
+        cursor.execute("SELECT * FROM products WHERE quantity <= reorder_level ORDER BY quantity ASC LIMIT 10")
+        low_stock_products = cursor.fetchall()
+        print(f"DEBUG: Low stock products count: {len(low_stock_products)}")
+        
+        # 3. Recent Transactions
+        cursor.execute("SELECT * FROM transactions ORDER BY date DESC, time DESC LIMIT 10")
+        transactions = cursor.fetchall()
+        print(f"DEBUG: Transactions count: {len(transactions)}")
+        
+        # 4. Sales Summary
+        if date_filter:
+            cursor.execute("""
+                SELECT 
+                    COUNT(*) as total_sales,
+                    SUM(total_amount) as total_revenue,
+                    SUM(CASE WHEN payment_status='Paid' THEN total_amount ELSE 0 END) as paid_amount,
+                    SUM(CASE WHEN payment_status='Credit' THEN total_amount ELSE 0 END) as credit_amount,
+                    SUM(CASE WHEN payment_status='Pending' THEN total_amount ELSE 0 END) as pending_amount
+                FROM sales WHERE date=%s
+            """, (date_filter,))
+        else:
+            cursor.execute("""
+                SELECT 
+                    COUNT(*) as total_sales,
+                    SUM(total_amount) as total_revenue,
+                    SUM(CASE WHEN payment_status='Paid' THEN total_amount ELSE 0 END) as paid_amount,
+                    SUM(CASE WHEN payment_status='Credit' THEN total_amount ELSE 0 END) as credit_amount,
+                    SUM(CASE WHEN payment_status='Pending' THEN total_amount ELSE 0 END) as pending_amount
+                FROM sales
+            """)
+        sales_summary_res = cursor.fetchone()
+        print(f"DEBUG: Sales summary res: {sales_summary_res}")
+        
+        sales_summary = {
+            'total_sales': sales_summary_res['total_sales'] or 0,
+            'total_revenue': sales_summary_res['total_revenue'] or 0,
+            'paid_amount': sales_summary_res['paid_amount'] or 0,
+            'credit_amount': sales_summary_res['credit_amount'] or 0,
+            'pending_amount': sales_summary_res['pending_amount'] or 0
+        }
+        
+        # 5. Metrics (Expenses)
+        if date_filter:
+            cursor.execute("SELECT SUM(amount) as total_expenses FROM expenses WHERE date=%s", (date_filter,))
+        else:
+            cursor.execute("SELECT SUM(amount) as total_expenses FROM expenses")
+        expenses_res = cursor.fetchone()
+        total_expenses = expenses_res['total_expenses'] or 0
+        print(f"DEBUG: Total expenses: {total_expenses}")
+        
+        metrics = {
+            'total_revenue': sales_summary['total_revenue'],
+            'total_expenses': total_expenses,
+            'net_profit': sales_summary['total_revenue'] - total_expenses
+        }
+        
+        # 6. Recent Sales
+        if date_filter:
+            cursor.execute("SELECT * FROM sales WHERE date=%s ORDER BY date DESC, time DESC LIMIT 10", (date_filter,))
+        else:
+            cursor.execute("SELECT * FROM sales ORDER BY date DESC, time DESC LIMIT 10")
+        recent_sales = cursor.fetchall()
+        print(f"DEBUG: Recent sales count: {len(recent_sales)}")
+        
+        print("DEBUG: Finalizing response...")
+        return jsonify({
+            'success': True,
+            'inventory_stats': {
+                'total_items': inv_stats['total_items'] or 0,
+                'low_stock_count': inv_stats['low_stock_count'] or 0,
+                'total_units': inv_stats['total_units'] or 0
+            },
+            'low_stock_products': low_stock_products,
+            'transactions': transactions,
+            'sales_summary': sales_summary,
+            'metrics': metrics,
+            'recent_sales': recent_sales
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"Dashboard Combined Error: {e}")
+        print(traceback.format_exc())
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        release_db_connection(conn)
+
 @app.route('/api/inventory')
 def get_inventory():
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT * FROM products ORDER BY LOWER(name) ASC")
     products = cursor.fetchall()
-    conn.close()
+    release_db_connection(conn)
     return jsonify(products)
 
 @app.route('/api/add-entry', methods=['POST'])
@@ -186,7 +400,7 @@ def add_entry():
         conn.rollback()
         return jsonify({'success': False, 'error': str(e)}), 400
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 @app.route('/api/update-reorder', methods=['POST'])
 def update_reorder():
@@ -201,7 +415,7 @@ def update_reorder():
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("UPDATE products SET reorder_level=%s WHERE name=%s", (level, name))
     conn.commit()
-    conn.close()
+    release_db_connection(conn)
     return jsonify({'success': True})
 
 @app.route('/api/transactions')
@@ -224,7 +438,7 @@ def get_transactions():
             cursor.execute("SELECT * FROM transactions WHERE type=%s ORDER BY date DESC, time DESC LIMIT 100", (type_filter,))
     
     transactions = cursor.fetchall()
-    conn.close()
+    release_db_connection(conn)
     return jsonify(transactions)
 
 @app.route('/api/generate-invoice', methods=['POST'])
@@ -254,7 +468,7 @@ def generate_invoice():
                   (item, qty, today, datetime.datetime.now().strftime("%H:%M:%S")))
     cursor.execute("INSERT INTO invoices VALUES (%s,%s,%s,%s)", (inv_num, today, customer, qty))
     conn.commit()
-    conn.close()
+    release_db_connection(conn)
     
     # Generate PDF
     pdf = FPDF()
@@ -266,10 +480,12 @@ def generate_invoice():
     pdf.cell(100, 10, f"Customer: {customer}", ln=True)
     pdf.cell(100, 10, f"Date: {today}", ln=True)
     pdf.ln(10)
-    pdf.cell(100, 10, "Item Name", border=1)
+    pdf.cell(15, 10, "S/N", border=1)
+    pdf.cell(85, 10, "Item Name", border=1)
     pdf.cell(40, 10, "Quantity", border=1)
     pdf.ln()
-    pdf.cell(100, 10, item, border=1)
+    pdf.cell(15, 10, "1", border=1)
+    pdf.cell(85, 10, item, border=1)
     pdf.cell(40, 10, str(qty), border=1)
     
     file_name = f"{inv_num}.pdf"
@@ -300,7 +516,7 @@ def delete_product(product_id):
     # Delete the product
     cursor.execute("DELETE FROM products WHERE id=%s", (product_id,))
     conn.commit()
-    conn.close()
+    release_db_connection(conn)
     
     return jsonify({'success': True, 'message': f'Product "{product_name}" deleted successfully'})
 
@@ -344,7 +560,7 @@ def delete_transaction(transaction_id):
     # Delete the transaction
     cursor.execute("DELETE FROM transactions WHERE id=%s", (transaction_id,))
     conn.commit()
-    conn.close()
+    release_db_connection(conn)
     
     return jsonify({'success': True, 'message': f'Transaction deleted successfully. Inventory adjusted for "{item_name}"'})
 
@@ -405,14 +621,16 @@ def create_sale():
                       (sale_num, customer, today, current_time, total_amount, payment_status))
         
         conn.commit()
-        conn.close()
+        release_db_connection(conn)
+        
+        log_activity('Create Sale', f"Sale No: {sale_num}, Total: {total_amount}")
         
         return jsonify({'success': True, 'message': 'Sale created successfully', 'sale_num': sale_num, 'total': total_amount})
     except Exception as e:
         conn.rollback()
         return jsonify({'success': False, 'error': str(e)}), 400
     finally:
-        conn.close()
+        release_db_connection(conn)
 
 @app.route('/api/sales')
 def get_sales():
@@ -432,7 +650,7 @@ def get_sales():
         cursor.execute("SELECT * FROM sales ORDER BY date DESC, time DESC LIMIT 100")
     
     sales = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+    release_db_connection(conn)
     return jsonify(sales)
 
 @app.route('/api/sales-summary')
@@ -464,7 +682,7 @@ def get_sales_summary():
         """)
     
     result = cursor.fetchone()
-    conn.close()
+    release_db_connection(conn)
     
     return jsonify({
         'total_sales': result['total_sales'] or 0,
@@ -518,7 +736,7 @@ def get_dashboard_metrics():
     # Calculate net profit
     net_profit = total_revenue - total_expenses
     
-    conn.close()
+    release_db_connection(conn)
     
     return jsonify({
         'total_revenue': total_revenue,
@@ -540,7 +758,7 @@ def get_sale_details(sale_num):
     cursor.execute("SELECT * FROM sale_items WHERE sale_num=%s", (sale_num,))
     items = [dict(row) for row in cursor.fetchall()]
     
-    conn.close()
+    release_db_connection(conn)
     
     return jsonify({
         'sale': dict(sale),
@@ -560,7 +778,7 @@ def generate_sale_invoice(sale_num):
     
     cursor.execute("SELECT * FROM sale_items WHERE sale_num=%s", (sale_num,))
     items = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+    release_db_connection(conn)
     
     # Generate PDF
     pdf = FPDF()
@@ -582,17 +800,19 @@ def generate_sale_invoice(sale_num):
     
     # Table header
     pdf.set_font("Arial", 'B', 10)
-    pdf.cell(80, 8, "Item", border=1)
-    pdf.cell(30, 8, "Qty", border=1)
-    pdf.cell(30, 8, "Price", border=1)
+    pdf.cell(15, 8, "S/N", border=1)
+    pdf.cell(65, 8, "Item", border=1)
+    pdf.cell(20, 8, "Qty", border=1)
+    pdf.cell(40, 8, "Price", border=1)
     pdf.cell(40, 8, "Total", border=1, ln=True)
     
     # Table rows
     pdf.set_font("Arial", size=10)
-    for item in items:
-        pdf.cell(80, 8, item['item_name'][:25], border=1)
-        pdf.cell(30, 8, str(item['quantity']), border=1)
-        pdf.cell(30, 8, f"{item['price']:.2f}", border=1)
+    for i, item in enumerate(items, start=1):
+        pdf.cell(15, 8, str(i), border=1)
+        pdf.cell(65, 8, item['item_name'][:20], border=1)
+        pdf.cell(20, 8, str(item['quantity']), border=1)
+        pdf.cell(40, 8, f"{item['price']:.2f}", border=1)
         pdf.cell(40, 8, f"{item['total']:.2f}", border=1, ln=True)
     
     # Total
@@ -630,7 +850,7 @@ def update_sale_status(sale_num):
     
     cursor.execute("UPDATE sales SET payment_status=%s WHERE sale_num=%s", (new_status, sale_num))
     conn.commit()
-    conn.close()
+    release_db_connection(conn)
     
     return jsonify({'success': True, 'message': f'Payment status updated to {new_status}'})
 
@@ -656,11 +876,13 @@ def add_expense():
         cursor.execute("INSERT INTO expenses (description, category, amount, date, time, notes) VALUES (%s,%s,%s,%s,%s,%s)",
                       (description, category, amount, date_str, time_str, notes))
         conn.commit()
-        conn.close()
+        release_db_connection(conn)
+        
+        log_activity('Add Expense', f"Description: {description}, Amount: {amount}")
         
         return jsonify({'success': True, 'message': 'Expense recorded successfully'})
     except Exception as e:
-        conn.close()
+        release_db_connection(conn)
         return jsonify({'success': False, 'error': str(e)}), 400
 
 @app.route('/api/expenses')
@@ -682,7 +904,7 @@ def get_expenses():
         cursor.execute("SELECT * FROM expenses ORDER BY date DESC, time DESC")
     
     expenses = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+    release_db_connection(conn)
     return jsonify(expenses)
 
 @app.route('/api/expenses-summary')
@@ -706,7 +928,7 @@ def get_expenses_summary():
         cursor.execute("SELECT category, SUM(amount) as total FROM expenses GROUP BY category ORDER BY total DESC")
     
     categories = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+    release_db_connection(conn)
     
     return jsonify({
         'total_expenses': result['total_expenses'] or 0,
@@ -726,7 +948,7 @@ def delete_expense(expense_id):
     
     cursor.execute("DELETE FROM expenses WHERE id=%s", (expense_id,))
     conn.commit()
-    conn.close()
+    release_db_connection(conn)
     
     return jsonify({'success': True, 'message': 'Expense deleted successfully'})
 
@@ -769,11 +991,11 @@ def delete_sale(sale_num):
         cursor.execute("DELETE FROM transactions WHERE type='Supply' AND item_name IN (SELECT item_name FROM sale_items WHERE sale_num=%s)", (sale_num,))
         
         conn.commit()
-        conn.close()
+        release_db_connection(conn)
         
         return jsonify({'success': True, 'message': f'Sale {sale_num} deleted successfully. Inventory reversed.'})
     except Exception as e:
-        conn.close()
+        release_db_connection(conn)
         return jsonify({'success': False, 'error': str(e)}), 400
 
 
@@ -786,7 +1008,7 @@ def get_users():
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute('SELECT id, username, full_name, email, role, created_at, is_active FROM users ORDER BY created_at DESC')
     users = cursor.fetchall()
-    conn.close()
+    release_db_connection(conn)
     
     return jsonify({
         'success': True,
@@ -821,7 +1043,9 @@ def create_user():
                     (username, password_hash, full_name, email, role, created_at, True))
         user_id = cursor.fetchone()[0]
         conn.commit()
-        conn.close()
+        release_db_connection(conn)
+        
+        log_activity('Create User', f"Username: {username}, Role: {role}")
         
         return jsonify({
             'success': True,
@@ -829,10 +1053,10 @@ def create_user():
             'user_id': user_id
         })
     except psycopg2.Error:
-        conn.close()
+        release_db_connection(conn)
         return jsonify({'success': False, 'error': 'Username already exists'}), 400
     except Exception as e:
-        conn.close()
+        release_db_connection(conn)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/users/<int:user_id>', methods=['PUT'])
@@ -863,7 +1087,7 @@ def update_user(user_id):
             params.append(role)
         
         if not updates:
-            conn.close()
+            release_db_connection(conn)
             return jsonify({'success': False, 'error': 'No fields to update'}), 400
         
         params.append(user_id)
@@ -871,11 +1095,13 @@ def update_user(user_id):
         cursor = conn.cursor()
         cursor.execute(query, params)
         conn.commit()
-        conn.close()
+        release_db_connection(conn)
+        
+        log_activity('Update User', f"User ID: {user_id}")
         
         return jsonify({'success': True, 'message': 'User updated successfully'})
     except Exception as e:
-        conn.close()
+        release_db_connection(conn)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/users/<int:user_id>/toggle-active', methods=['POST'])
@@ -892,18 +1118,18 @@ def toggle_user_active(user_id):
         cursor.execute('SELECT is_active FROM users WHERE id = %s', (user_id,))
         user = cursor.fetchone()
         if not user:
-            conn.close()
+            release_db_connection(conn)
             return jsonify({'success': False, 'error': 'User not found'}), 404
         
         new_status = False if user['is_active'] else True
         cursor.execute('UPDATE users SET is_active = %s WHERE id = %s', (new_status, user_id))
         conn.commit()
-        conn.close()
+        release_db_connection(conn)
         
         status_text = 'activated' if new_status else 'deactivated'
         return jsonify({'success': True, 'message': f'User {status_text} successfully'})
     except Exception as e:
-        conn.close()
+        release_db_connection(conn)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/users/<int:user_id>/change-password', methods=['POST'])
@@ -920,7 +1146,7 @@ def change_password(user_id):
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute('SELECT role FROM users WHERE id = %s', (session['user_id'],))
         user = cursor.fetchone()
-        conn.close()
+        release_db_connection(conn)
         if not user or user['role'] != 'admin':
             return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     
@@ -933,19 +1159,19 @@ def change_password(user_id):
         cursor.execute('SELECT password_hash FROM users WHERE id = %s', (user_id,))
         user = cursor.fetchone()
         if not user:
-            conn.close()
+            release_db_connection(conn)
             return jsonify({'success': False, 'error': 'User not found'}), 404
         
         # Verify current password if changing own password
         if user_id == session.get('user_id'):
             if not current_password or not check_password_hash(user['password_hash'], current_password):
-                conn.close()
+                release_db_connection(conn)
                 return jsonify({'success': False, 'error': 'Current password is incorrect'}), 401
         
         new_hash = generate_password_hash(new_password)
         cursor.execute('UPDATE users SET password_hash = %s WHERE id = %s', (new_hash, user_id))
         conn.commit()
-        conn.close()
+        release_db_connection(conn)
         
         return jsonify({'success': True, 'message': 'Password changed successfully'})
     except Exception as e:
@@ -966,6 +1192,8 @@ def delete_user(user_id):
         cursor.execute('DELETE FROM users WHERE id = %s', (user_id,))
         conn.commit()
         conn.close()
+        
+        log_activity('Delete User', f"User ID: {user_id}")
         
         return jsonify({'success': True, 'message': 'User deleted successfully'})
     except Exception as e:

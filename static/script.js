@@ -278,12 +278,19 @@ function showPage(pageName) {
     document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
     document.getElementById(pageName).classList.add('active');
 
+    // Persist current page across refreshes
+    localStorage.setItem('activePage', pageName);
+
     if (pageName === 'dashboard') loadDashboard();
     if (pageName === 'inventory') loadInventory();
     if (pageName === 'transactions') loadTransactions();
     if (pageName === 'sales') {
         loadSalesHistory();
         loadSalesRecords();
+    }
+    if (pageName === 'admin') {
+        loadUsers();
+        loadActivityLog();
     }
     if (pageName === 'expenses') {
         loadExpenses();
@@ -300,13 +307,61 @@ function updateDateTime() {
 updateDateTime();
 setInterval(updateDateTime, 60000);
 
-// Notification System
+// Notification System (Now using Beautiful Modals)
 function showNotification(message, type = 'success') {
+    // Determine title based on type
+    let title = 'Notification';
+    if (type === 'success') title = 'Success';
+    if (type === 'error') title = 'Action Failed';
+    if (type === 'warning') title = 'Warning';
+    if (type === 'info') title = 'System Info';
+
+    // Show the modal
+    showAlertModal(message, type, title);
+    
+    // Fallback toast for secondary feedback (optional, but let's stick to modals as requested)
     const notification = document.getElementById('notification');
-    notification.textContent = message;
-    notification.className = `notification show ${type}`;
-    setTimeout(() => notification.classList.remove('show'), 3000);
+    if (notification) {
+        notification.textContent = message;
+        notification.className = `notification show ${type}`;
+        setTimeout(() => notification.classList.remove('show'), 4000);
+    }
 }
+
+
+// Universal Alert Modal
+function showAlertModal(message, type = 'info', title = 'Notification') {
+    const modal = document.getElementById('alertModal');
+    const icon = document.getElementById('alertModalIcon');
+    const titleEl = document.getElementById('alertModalTitle');
+    const messageEl = document.getElementById('alertModalMessage');
+    
+    titleEl.textContent = title;
+    messageEl.textContent = message;
+    
+    // Set icon and colors based on type
+    let iconClass = 'fa-info-circle';
+    modal.className = `modal modal-${type}`;
+    
+    if (type === 'success') iconClass = 'fa-check-circle';
+    if (type === 'error') iconClass = 'fa-exclamation-circle';
+    if (type === 'warning') iconClass = 'fa-exclamation-triangle';
+    
+    icon.innerHTML = `<i class="fas ${iconClass}"></i>`;
+    modal.classList.add('show');
+}
+
+function closeAlertModal() {
+    document.getElementById('alertModal').classList.remove('show');
+}
+
+// Override native alert
+window.alert = function(message) {
+    showAlertModal(message, 'info', 'System Message');
+};
+
+// Override native confirm (Async version needed for logic, so we use a custom one below)
+
 
 // ==================== OFFLINE FUNCTIONALITY ====================
 // IndexedDB Setup
@@ -515,123 +570,166 @@ initIndexedDB().catch(error => console.error('Failed to initialize IndexedDB:', 
 // --- DASHBOARD ---
 async function loadDashboard() {
     const dateFilter = document.getElementById('dashboardDateFilter').value || '';
+    
+    // Try to load from cache first for instant UI
+    const cachedProducts = await getFromIndexedDB('inventory');
+    if (cachedProducts && cachedProducts.length > 0) {
+        renderDashboard(
+            cachedProducts, 
+            [], 
+            [], 
+            { total_sales: 0, total_revenue: 0, credit_amount: 0, pending_amount: 0, paid_amount: 0 }, 
+            { total_revenue: 0, total_expenses: 0 }, 
+            []
+        );
+    }
 
     try {
-        const response = await fetch('/api/inventory');
-        const products = await response.json();
+        // Fetch all dashboard data in a single optimized call
+        const response = await fetch(`/api/dashboard-combined${dateFilter ? `?date=${dateFilter}` : ''}`);
+        const data = await response.json();
 
-        const transactions = await fetch('/api/transactions').then(r => r.json());
-
-        // Get sales summary
-        let salesUrl = '/api/sales-summary';
-        if (dateFilter) {
-            salesUrl += `?date=${dateFilter}`;
-        }
-        const salesSummary = await fetch(salesUrl).then(r => r.json());
-
-        // Get dashboard metrics (revenue, expenses, profit)
-        let metricsUrl = '/api/dashboard-metrics';
-        if (dateFilter) {
-            metricsUrl += `?date=${dateFilter}`;
-        }
-        const metrics = await fetch(metricsUrl).then(r => r.json());
-
-        // Get recent sales
-        let recentSalesUrl = '/api/sales' + (dateFilter ? `?date=${dateFilter}` : '');
-        const recentSales = await fetch(recentSalesUrl).then(r => r.json());
-
-        // Calculate stats
-        const totalItems = products.length;
-        const lowStock = products.filter(p => p.quantity <= p.reorder_level).length;
-        const healthyStock = totalItems - lowStock;
-        const totalUnits = products.reduce((sum, p) => sum + p.quantity, 0);
-
-        document.getElementById('totalItems').textContent = totalItems;
-        document.getElementById('lowStock').textContent = lowStock;
-        document.getElementById('healthyStock').textContent = healthyStock;
-        document.getElementById('totalUnits').textContent = totalUnits;
-
-        // Sales stats
-        document.getElementById('todaysSales').textContent = salesSummary.total_sales || 0;
-        document.getElementById('totalRevenue').textContent = `₦${(metrics.total_revenue || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-        document.getElementById('totalExpenses').textContent = `₦${(metrics.total_expenses || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-        // Total credit
-        const totalCredit = salesSummary.credit_amount || 0;
-        document.getElementById('totalCredit').textContent = `₦${totalCredit.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-        // Total pending
-        const totalPending = salesSummary.pending_amount || 0;
-        document.getElementById('totalPending').textContent = `₦${totalPending.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-        // Realized payment (paid amount - expenses)
-        const paidAmount = salesSummary.paid_amount || 0;
-        const totalExpenses = metrics.total_expenses || 0;
-        const realizedPayment = paidAmount - totalExpenses;
-        const realizedPaymentElement = document.getElementById('realizedPayment');
-        realizedPaymentElement.textContent = `₦${realizedPayment.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-        if (realizedPayment < 0) {
-            realizedPaymentElement.style.color = 'var(--danger-color)';
+        if (data.success) {
+            // Render with fresh data from the single response
+            renderDashboard(
+                data.inventory_stats || {}, // New optimized stats
+                data.low_stock_products || [], // Limited list
+                data.transactions, 
+                data.sales_summary, 
+                data.metrics, 
+                data.recent_sales
+            );
         } else {
-            realizedPaymentElement.style.color = 'var(--secondary-color)';
+            // Handle specific errors from the API
+            if (data.error === 'Authentication required') {
+                window.location.href = '/login';
+                return;
+            }
+            throw new Error(data.error || 'Failed to load dashboard data');
         }
 
-        // Low stock items
-        const lowStockItems = products.filter(p => p.quantity <= p.reorder_level);
-        const lowStockTable = document.getElementById('lowStockTable');
-        lowStockTable.innerHTML = lowStockItems.map(item => `
-            <tr>
-                <td>${item.name}</td>
-                <td>${item.quantity}</td>
-                <td>${item.reorder_level}</td>
-                <td><span class="status-badge danger">Low Stock</span></td>
-            </tr>
-        `).join('');
-
-        if (lowStockItems.length === 0) {
-            lowStockTable.innerHTML = '<tr><td colspan="4" style="text-align:center; color: var(--text-secondary);">No low stock items</td></tr>';
-        }
-
-        // Recent transactions
-        const recentTx = transactions.slice(0, 5);
-        const txTable = document.getElementById('recentTransactions');
-        txTable.innerHTML = recentTx.map(tx => `
-            <tr>
-                <td>${tx.item_name}</td>
-                <td>${tx.quantity}</td>
-                <td><span class="status-badge ${tx.type === 'Intake' ? 'success' : 'warning'}">${tx.type}</span></td>
-                <td>${tx.time}</td>
-            </tr>
-        `).join('');
-
-        if (recentTx.length === 0) {
-            txTable.innerHTML = '<tr><td colspan="4" style="text-align:center; color: var(--text-secondary);">No transactions yet</td></tr>';
-        }
-
-        // Recent sales
-        const recentSalesLimited = recentSales.slice(0, 5);
-        const recentSalesTable = document.getElementById('recentSalesTable');
-        recentSalesTable.innerHTML = recentSalesLimited.map(sale => {
-            const statusColor = sale.payment_status.toLowerCase();
-            return `
-                <tr>
-                    <td><strong>${sale.sale_num}</strong></td>
-                    <td>${sale.customer}</td>
-                    <td>${sale.date}</td>
-                    <td>₦${parseFloat(sale.total_amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                    <td><span class="payment-status-badge ${statusColor}">${sale.payment_status}</span></td>
-                </tr>
-            `;
-        }).join('');
-
-        if (recentSalesLimited.length === 0) {
-            recentSalesTable.innerHTML = '<tr><td colspan="5" style="text-align:center; color: var(--text-secondary);">No sales recorded</td></tr>';
-        }
     } catch (error) {
-        console.error('Error loading dashboard:', error);
-        showNotification('Error loading dashboard', 'error');
+        console.error('Error loading fresh dashboard data:', error);
+        // Only show notification if we don't even have cached data to show
+        if (!cachedProducts || cachedProducts.length === 0) {
+            const errorMsg = error.message.includes('Authentication') ? 'Session expired. Please login again.' : 'Error loading dashboard data';
+            showNotification(errorMsg, 'error');
+            
+            if (error.message.includes('Authentication')) {
+                setTimeout(() => window.location.href = '/login', 2000);
+            }
+        }
     }
 }
+
+// Separate rendering logic for reusability
+function renderDashboard(inventoryStats, lowStockProducts, transactions, salesSummary, metrics, recentSales) {
+    // Check if we're using old products array or new stats object
+    let totalItems, lowStock, healthyStock, totalUnits;
+    
+    if (inventoryStats && inventoryStats.total_items !== undefined) {
+        // Optimized path
+        totalItems = inventoryStats.total_items;
+        lowStock = inventoryStats.low_stock_count;
+        healthyStock = totalItems - lowStock;
+        totalUnits = inventoryStats.total_units;
+    } else {
+        // Fallback for cached full inventory
+        const products = Array.isArray(inventoryStats) ? inventoryStats : [];
+        totalItems = products.length;
+        lowStock = products.filter(p => p.quantity <= p.reorder_level).length;
+        healthyStock = totalItems - lowStock;
+        totalUnits = products.reduce((sum, p) => sum + p.quantity, 0);
+    }
+
+    document.getElementById('totalItems').textContent = totalItems;
+    document.getElementById('lowStock').textContent = lowStock;
+    document.getElementById('healthyStock').textContent = healthyStock;
+    document.getElementById('totalUnits').textContent = totalUnits;
+
+    // Sales stats
+    document.getElementById('todaysSales').textContent = salesSummary.total_sales || 0;
+    document.getElementById('totalRevenue').textContent = `₦${(metrics.total_revenue || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    document.getElementById('totalExpenses').textContent = `₦${(metrics.total_expenses || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    // Total credit
+    const totalCredit = salesSummary.credit_amount || 0;
+    document.getElementById('totalCredit').textContent = `₦${totalCredit.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    // Total pending
+    const totalPending = salesSummary.pending_amount || 0;
+    document.getElementById('totalPending').textContent = `₦${totalPending.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    // Realized payment (paid amount - expenses)
+    const paidAmount = salesSummary.paid_amount || 0;
+    const totalExpenses = metrics.total_expenses || 0;
+    const realizedPayment = paidAmount - totalExpenses;
+    const realizedPaymentElement = document.getElementById('realizedPayment');
+    realizedPaymentElement.textContent = `₦${realizedPayment.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (realizedPayment < 0) {
+        realizedPaymentElement.style.color = 'var(--danger-color)';
+    } else {
+        realizedPaymentElement.style.color = 'var(--secondary-color)';
+    }
+
+    // Low stock items
+    const lowStockTable = document.getElementById('lowStockTable');
+    const displayItems = Array.isArray(lowStockProducts) ? lowStockProducts : 
+                         (Array.isArray(inventoryStats) ? inventoryStats.filter(p => p.quantity <= p.reorder_level) : []);
+    
+    lowStockTable.innerHTML = displayItems.map((item, index) => `
+        <tr>
+            <td>${index + 1}</td>
+            <td>${item.name}</td>
+            <td>${item.quantity}</td>
+            <td>${item.reorder_level}</td>
+            <td><span class="status-badge danger">Low Stock</span></td>
+        </tr>
+    `).join('');
+
+    if (displayItems.length === 0) {
+        lowStockTable.innerHTML = '<tr><td colspan="5" style="text-align:center; color: var(--text-secondary);">No low stock items</td></tr>';
+    }
+
+    // Recent transactions
+    const recentTx = transactions.slice(0, 5);
+    const txTable = document.getElementById('recentTransactions');
+    txTable.innerHTML = recentTx.map((tx, index) => `
+        <tr>
+            <td>${index + 1}</td>
+            <td>${tx.item_name}</td>
+            <td>${tx.quantity}</td>
+            <td><span class="status-badge ${tx.type === 'Intake' ? 'success' : 'warning'}">${tx.type}</span></td>
+            <td>${tx.time}</td>
+        </tr>
+    `).join('');
+
+    if (recentTx.length === 0) {
+        txTable.innerHTML = '<tr><td colspan="5" style="text-align:center; color: var(--text-secondary);">No transactions yet</td></tr>';
+    }
+
+    // Recent sales
+    const recentSalesLimited = recentSales.slice(0, 5);
+    const recentSalesTable = document.getElementById('recentSalesTable');
+    recentSalesTable.innerHTML = recentSalesLimited.map((sale, index) => {
+        const statusColor = sale.payment_status.toLowerCase();
+        return `
+            <tr>
+                <td>${index + 1}</td>
+                <td><strong>${sale.sale_num}</strong></td>
+                <td>${sale.customer}</td>
+                <td>${sale.date}</td>
+                <td>₦${parseFloat(sale.total_amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                <td><span class="payment-status-badge ${statusColor}">${sale.payment_status}</span></td>
+            </tr>
+        `;
+    }).join('');
+
+    if (recentSalesLimited.length === 0) {
+        recentSalesTable.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--text-secondary);">No sales recorded</td></tr>';
+    }
+}
+
 
 // --- INVENTORY ---
 async function loadInventory() {
@@ -661,14 +759,13 @@ async function loadInventory() {
                 <td>
                     <div class="action-buttons">
                         <button class="action-btn edit" onclick="openReorderModal('${item.name}', ${item.reorder_level})">Update</button>
-                        <button class="action-btn delete" onclick="confirmDelete(${item.id}, 'product', '${item.name}')">Delete</button>
                     </div>
                 </td>
             </tr>
         `).join('');
 
         if (products.length === 0) {
-            table.innerHTML = '<tr><td colspan="5" style="text-align:center; color: var(--text-secondary);">No items in inventory</td></tr>';
+            table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No items in inventory</td></tr>';
         }
 
         // Setup search
@@ -702,14 +799,13 @@ async function loadInventory() {
                     <td>
                         <div class="action-buttons">
                             <button class="action-btn edit" onclick="openReorderModal('${item.name}', ${item.reorder_level})">Update</button>
-                            <button class="action-btn delete" onclick="confirmDelete(${item.id}, 'product', '${item.name}')">Delete</button>
                         </div>
                     </td>
                 </tr>
             `).join('');
             showNotification('Showing cached inventory - offline mode', 'warning');
         } else {
-            table.innerHTML = '<tr><td colspan="5" style="text-align:center; color: var(--text-secondary);">No cached inventory available</td></tr>';
+            table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No cached inventory available</td></tr>';
         }
         showNotification('Error loading inventory', 'error');
     }
@@ -848,8 +944,9 @@ async function loadTransactions() {
         const transactions = await response.json();
 
         const table = document.getElementById('transactionsTable');
-        table.innerHTML = transactions.map(tx => `
+        table.innerHTML = transactions.map((tx, index) => `
             <tr>
+                <td>${index + 1}</td>
                 <td>${tx.date}</td>
                 <td>${tx.time}</td>
                 <td>${tx.item_name}</td>
@@ -864,7 +961,7 @@ async function loadTransactions() {
         `).join('');
 
         if (transactions.length === 0) {
-            table.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--text-secondary);">No transactions found</td></tr>';
+            table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No transactions found</td></tr>';
         }
     } catch (error) {
         console.error('Error loading transactions:', error);
@@ -934,7 +1031,7 @@ window.addEventListener('click', (e) => {
     }
 });
 
-document.getElementById('quickReorderForm').addEventListener('submit', async (e) => {
+async function handleQuickReorderSubmit(e) {
     e.preventDefault();
 
     const name = document.getElementById('quickReorderItem').value;
@@ -957,7 +1054,8 @@ document.getElementById('quickReorderForm').addEventListener('submit', async (e)
     } catch (error) {
         showNotification('Error updating reorder level', 'error');
     }
-});
+}
+document.getElementById('quickReorderForm').addEventListener('submit', handleQuickReorderSubmit);
 
 // --- AUTHENTICATION & ADMIN ---
 let currentUserId = null;
@@ -1002,8 +1100,8 @@ if (window.location.pathname !== '/login') {
 }
 
 // Logout
-document.getElementById('logoutBtn')?.addEventListener('click', async () => {
-    if (confirm('Are you sure you want to log out?')) {
+document.getElementById('logoutBtn')?.addEventListener('click', () => {
+    confirmAction('Are you sure you want to log out?', async () => {
         try {
             const response = await fetch('/api/logout', { method: 'POST' });
             const data = await response.json();
@@ -1014,7 +1112,7 @@ document.getElementById('logoutBtn')?.addEventListener('click', async () => {
             console.error('Logout error:', error);
             window.location.href = '/login';
         }
-    }
+    });
 });
 
 // --- ADMIN PANEL FUNCTIONS ---
@@ -1026,8 +1124,9 @@ async function loadUsers() {
 
         if (data.success) {
             const tbody = document.getElementById('usersTable');
-            tbody.innerHTML = data.users.map(user => `
+            tbody.innerHTML = data.users.map((user, index) => `
                 <tr>
+                    <td>${index + 1}</td>
                     <td>${user.username}</td>
                     <td>${user.full_name || '-'}</td>
                     <td><span class="status-badge ${user.role}">${user.role}</span></td>
@@ -1068,6 +1167,43 @@ async function loadUsers() {
         showNotification('Error loading users', 'error');
     }
 }
+
+async function loadActivityLog() {
+    try {
+        const response = await fetch('/api/activity-log');
+        const data = await response.json();
+
+        if (data.success) {
+            const tbody = document.getElementById('activityLogTable');
+            if (tbody) {
+                tbody.innerHTML = data.logs.map(log => `
+                    <tr onclick="showActivityDetails('${log.username}', '${log.action}', '${log.details.replace(/'/g, "\\'")}', '${log.timestamp}')" style="cursor: pointer;">
+                        <td><strong>${log.username}</strong></td>
+                        <td>${log.action}</td>
+                        <td><small>${log.details || '-'}</small></td>
+                        <td>${log.timestamp}</td>
+                    </tr>
+                `).join('');
+            }
+        }
+    } catch (error) {
+        console.error('Error loading activity log:', error);
+    }
+}
+
+function showActivityDetails(user, action, details, time) {
+    const message = `User: ${user}\nAction: ${action}\nDetails: ${details}\nTime: ${time}`;
+    showAlertModal(message, 'info', 'Activity Details');
+}
+
+// User Search
+document.getElementById('searchUsers')?.addEventListener('keyup', () => {
+    const searchTerm = document.getElementById('searchUsers').value.toLowerCase();
+    document.querySelectorAll('#usersTable tr').forEach(row => {
+        const text = row.textContent.toLowerCase();
+        row.style.display = text.includes(searchTerm) ? '' : 'none';
+    });
+});
 
 // Add User Modal
 const addUserModal = document.getElementById('addUserModal');
@@ -1111,7 +1247,7 @@ document.getElementById('addUserForm')?.addEventListener('submit', async (e) => 
 });
 
 async function toggleUserActive(userId) {
-    if (!confirm('Change user status?')) return;
+    confirmAction('Change user status?', async () => {
 
     try {
         const response = await fetch(`/api/users/${userId}/toggle-active`, {
@@ -1129,10 +1265,28 @@ async function toggleUserActive(userId) {
         console.error('Error toggling user:', error);
         showNotification('Error updating user status', 'error');
     }
+    });
+}
+
+async function performLocalBackup() {
+    try {
+        showNotification('Starting backup...', 'info');
+        const response = await fetch('/api/backup/local', { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            showNotification(data.message, 'success');
+        } else {
+            showNotification(data.error || 'Backup failed', 'error');
+        }
+    } catch (error) {
+        console.error('Error performing backup:', error);
+        showNotification('Error connecting to server', 'error');
+    }
 }
 
 async function deleteUser(userId) {
-    if (!confirm('Are you sure you want to delete this user? This cannot be undone.')) return;
+    confirmAction('Are you sure you want to delete this user? This cannot be undone.', async () => {
 
     try {
         const response = await fetch(`/api/users/${userId}`, {
@@ -1150,6 +1304,7 @@ async function deleteUser(userId) {
         console.error('Error deleting user:', error);
         showNotification('Error deleting user', 'error');
     }
+    });
 }
 
 // Edit User Modal
@@ -1239,8 +1394,21 @@ showPage = function (pageName) {
     }
 };
 
-// Load dashboard on startup
-loadDashboard();
+// Restore last visited page on startup (defaults to 'dashboard')
+const savedPage = localStorage.getItem('activePage') || 'dashboard';
+const validPages = ['dashboard', 'inventory', 'entry', 'transactions', 'invoice', 'sales', 'expenses', 'admin'];
+const pageToRestore = validPages.includes(savedPage) ? savedPage : 'dashboard';
+
+// Sync active nav state with the restored page
+document.querySelectorAll('.nav-item, .bottom-nav-item').forEach(nav => {
+    nav.classList.remove('active');
+    if (nav.getAttribute('data-page') === pageToRestore) {
+        nav.classList.add('active');
+    }
+});
+
+showPage(pageToRestore);
+
 
 // --- EXPENSES FUNCTIONALITY ---
 // --- EXPENSES FUNCTIONALITY ---
@@ -1313,8 +1481,9 @@ async function loadExpenses() {
         await saveToIndexedDB('expenses', expenses);
 
         const table = document.getElementById('expensesTable');
-        table.innerHTML = expenses.map(expense => `
+        table.innerHTML = expenses.map((expense, index) => `
             <tr>
+                <td>${index + 1}</td>
                 <td>${expense.date}</td>
                 <td>${expense.description}</td>
                 <td><span class="status-badge healthy">${expense.category}</span></td>
@@ -1329,7 +1498,7 @@ async function loadExpenses() {
         `).join('');
 
         if (expenses.length === 0) {
-            table.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--text-secondary);">No expenses recorded</td></tr>';
+            table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No expenses recorded</td></tr>';
         }
     } catch (error) {
         console.error('Error loading expenses:', error);
@@ -1338,8 +1507,9 @@ async function loadExpenses() {
 
         const table = document.getElementById('expensesTable');
         if (expenses.length > 0) {
-            table.innerHTML = expenses.map(expense => `
+            table.innerHTML = expenses.map((expense, index) => `
                 <tr>
+                    <td>${index + 1}</td>
                     <td>${expense.date}</td>
                     <td>${expense.description}</td>
                     <td><span class="status-badge healthy">${expense.category}</span></td>
@@ -1354,7 +1524,7 @@ async function loadExpenses() {
             `).join('');
             showNotification('Showing cached expenses - offline mode', 'warning');
         } else {
-            table.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--text-secondary);">No cached expenses available</td></tr>';
+            table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No cached expenses available</td></tr>';
         }
     }
 }
@@ -1427,6 +1597,12 @@ function confirmDelete(id, type, name) {
 
 document.getElementById('confirmBtn').addEventListener('click', async () => {
     if (!deleteData.id) return;
+    
+    // Disable button to prevent double-click
+    const confirmBtn = document.getElementById('confirmBtn');
+    const originalText = confirmBtn.textContent;
+    confirmBtn.disabled = true;
+    confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting...';
 
     try {
         let url = '';
@@ -1444,7 +1620,7 @@ document.getElementById('confirmBtn').addEventListener('click', async () => {
         const result = await response.json();
 
         if (result.success) {
-            showNotification(result.message, 'success');
+            showAlertModal(result.message, 'success', 'Deleted Successfully');
             confirmModal.classList.remove('show');
 
             // Reload appropriate data
@@ -1465,11 +1641,31 @@ document.getElementById('confirmBtn').addEventListener('click', async () => {
                 loadDashboard();
             }
         } else {
-            showNotification(result.error || 'Error deleting item', 'error');
+            showAlertModal(result.error || 'Error deleting item', 'error', 'Action Failed');
         }
     } catch (error) {
         console.error('Error:', error);
-        showNotification('Error deleting item', 'error');
+        showAlertModal('Error connecting to server', 'error', 'Connection Error');
+    } finally {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = originalText;
+    }
+});
+
+// Helper for confirmation actions
+let confirmCallback = null;
+function confirmAction(message, callback) {
+    confirmCallback = callback;
+    document.getElementById('confirmMessage').textContent = message;
+    document.getElementById('confirmModal').classList.add('show');
+}
+
+// Handle global confirmation
+document.getElementById('confirmBtn').addEventListener('click', () => {
+    if (confirmCallback) {
+        confirmCallback();
+        confirmCallback = null;
+        document.getElementById('confirmModal').classList.remove('show');
     }
 });
 
@@ -1480,8 +1676,9 @@ document.getElementById('cancelBtn').addEventListener('click', () => {
 // --- SALES PAGE FUNCTIONALITY ---
 let currentSaleNum = null;
 
-document.getElementById('addItemBtn').addEventListener('click', () => {
+function addNewSaleRow() {
     const container = document.getElementById('saleItemsContainer');
+    if (!container) return;
     const itemRow = document.createElement('div');
     itemRow.className = 'sale-item-row';
     itemRow.innerHTML = `
@@ -1512,7 +1709,9 @@ document.getElementById('addItemBtn').addEventListener('click', () => {
     `;
     container.appendChild(itemRow);
     attachItemListeners(itemRow);
-});
+}
+
+document.getElementById('addItemBtn')?.addEventListener('click', addNewSaleRow);
 
 function removeItem(button) {
     button.closest('.sale-item-row').remove();
@@ -1564,7 +1763,7 @@ document.querySelectorAll('.sale-item-row').forEach(row => {
 });
 
 // Submit sale form
-document.getElementById('saleForm').addEventListener('submit', async (e) => {
+async function handleSaleSubmit(e) {
     e.preventDefault();
 
     const customer = document.getElementById('saleCustomer').value.trim();
@@ -1680,7 +1879,8 @@ document.getElementById('saleForm').addEventListener('submit', async (e) => {
             showNotification('Error creating sale', 'error');
         }
     }
-});
+}
+document.getElementById('saleForm').addEventListener('submit', handleSaleSubmit);
 
 async function loadSalesHistory() {
     try {
@@ -1709,10 +1909,11 @@ async function loadSalesHistory() {
         await saveToIndexedDB('sales', sales);
 
         const table = document.getElementById('salesTable');
-        table.innerHTML = sales.map(sale => {
+        table.innerHTML = sales.map((sale, index) => {
             const statusColor = sale.payment_status.toLowerCase();
             return `
                 <tr>
+                    <td>${index + 1}</td>
                     <td><strong>${sale.sale_num}</strong></td>
                     <td>${sale.customer}</td>
                     <td>${sale.date}</td>
@@ -1734,7 +1935,7 @@ async function loadSalesHistory() {
         }).join('');
 
         if (sales.length === 0) {
-            table.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--text-secondary);">No sales recorded</td></tr>';
+            table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No sales recorded</td></tr>';
         }
     } catch (error) {
         console.error('Error loading sales:', error);
@@ -1743,10 +1944,11 @@ async function loadSalesHistory() {
 
         const table = document.getElementById('salesTable');
         if (sales.length > 0) {
-            table.innerHTML = sales.map(sale => {
+            table.innerHTML = sales.map((sale, index) => {
                 const statusColor = sale.payment_status.toLowerCase();
                 return `
                     <tr>
+                        <td>${index + 1}</td>
                         <td><strong>${sale.sale_num}</strong></td>
                         <td>${sale.customer}</td>
                         <td>${sale.date}</td>
@@ -1768,7 +1970,7 @@ async function loadSalesHistory() {
             }).join('');
             showNotification('Showing cached sales - offline mode', 'warning');
         } else {
-            table.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--text-secondary);">No cached sales available</td></tr>';
+            table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No cached sales available</td></tr>';
         }
     }
 }
@@ -1797,10 +1999,11 @@ async function loadSalesRecords() {
         const sales = await response.json();
 
         const table = document.getElementById('salesRecordsTable');
-        table.innerHTML = sales.map(sale => {
+        table.innerHTML = sales.map((sale, index) => {
             const statusColor = sale.payment_status.toLowerCase();
             return `
                 <tr>
+                    <td>${index + 1}</td>
                     <td><strong>${sale.sale_num}</strong></td>
                     <td>${sale.customer}</td>
                     <td>${sale.date}</td>
@@ -1823,7 +2026,7 @@ async function loadSalesRecords() {
         }).join('');
 
         if (sales.length === 0) {
-            table.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--text-secondary);">No sales recorded</td></tr>';
+            table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No sales recorded</td></tr>';
         }
     } catch (error) {
         console.error('Error loading sales records:', error);
@@ -1911,7 +2114,7 @@ function closeUpdateStatusModal() {
     document.getElementById('updateStatusModal').classList.remove('show');
 }
 
-document.getElementById('updateStatusForm').addEventListener('submit', async (e) => {
+async function handleUpdateStatusSubmit(e) {
     e.preventDefault();
 
     const newStatus = document.getElementById('statusSelect').value;
@@ -1943,7 +2146,8 @@ document.getElementById('updateStatusForm').addEventListener('submit', async (e)
         console.error('Error:', error);
         showNotification('Error updating status', 'error');
     }
-});
+}
+document.getElementById('updateStatusForm').addEventListener('submit', handleUpdateStatusSubmit);
 
 async function quickUpdateStatus(saleNum, newStatus) {
     try {
