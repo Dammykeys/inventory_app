@@ -59,7 +59,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (window.innerWidth > 768) {
             sidebar.classList.remove('active');
             document.body.style.overflow = '';
-            
+
             // Re-apply collapsed state if it was saved
             if (localStorage.getItem('sidebarCollapsed') === 'true') {
                 sidebar.classList.add('collapsed');
@@ -219,17 +219,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+// Stub for reorder form submit handler
+function handleReorderSubmit(event) {
+    event.preventDefault();
+    console.warn('handleReorderSubmit is not yet implemented.');
+    // TODO: Implement reorder logic here
+}
+
 // Page Navigation
 function initializeNavigation() {
     const navItems = document.querySelectorAll('.nav-item, .bottom-nav-item');
-    
+
     navItems.forEach(item => {
         item.addEventListener('click', (e) => {
             e.preventDefault();
             const pageName = item.getAttribute('data-page');
             if (pageName) {
                 showPage(pageName);
-                
+
                 // Update active state for both navs
                 document.querySelectorAll('.nav-item, .bottom-nav-item').forEach(nav => {
                     nav.classList.remove('active');
@@ -318,7 +325,7 @@ function showNotification(message, type = 'success') {
 
     // Show the modal
     showAlertModal(message, type, title);
-    
+
     // Fallback toast for secondary feedback (optional, but let's stick to modals as requested)
     const notification = document.getElementById('notification');
     if (notification) {
@@ -335,18 +342,18 @@ function showAlertModal(message, type = 'info', title = 'Notification') {
     const icon = document.getElementById('alertModalIcon');
     const titleEl = document.getElementById('alertModalTitle');
     const messageEl = document.getElementById('alertModalMessage');
-    
+
     titleEl.textContent = title;
     messageEl.textContent = message;
-    
+
     // Set icon and colors based on type
     let iconClass = 'fa-info-circle';
     modal.className = `modal modal-${type}`;
-    
+
     if (type === 'success') iconClass = 'fa-check-circle';
     if (type === 'error') iconClass = 'fa-exclamation-circle';
     if (type === 'warning') iconClass = 'fa-exclamation-triangle';
-    
+
     icon.innerHTML = `<i class="fas ${iconClass}"></i>`;
     modal.classList.add('show');
 }
@@ -356,7 +363,7 @@ function closeAlertModal() {
 }
 
 // Override native alert
-window.alert = function(message) {
+window.alert = function (message) {
     showAlertModal(message, 'info', 'System Message');
 };
 
@@ -504,21 +511,25 @@ async function syncOfflineChanges() {
 
     updateSyncStatus(`Syncing ${pending.length} changes...`, 'syncing');
 
-    for (const operation of pending) {
-        try {
-            const response = await fetch(operation.endpoint, {
-                method: operation.method,
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(operation.data)
-            });
-
-            if (response.ok) {
-                await markAsSynced(operation.id);
-                console.log(`Synced: ${operation.method} ${operation.endpoint}`);
+    // Batch size for parallel requests
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < pending.length; i += BATCH_SIZE) {
+        const batch = pending.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(async (operation) => {
+            try {
+                const response = await fetch(operation.endpoint, {
+                    method: operation.method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(operation.data)
+                });
+                if (response.ok) {
+                    await markAsSynced(operation.id);
+                    console.log(`Synced: ${operation.method} ${operation.endpoint}`);
+                }
+            } catch (error) {
+                console.error(`Failed to sync: ${operation.method} ${operation.endpoint}`, error);
             }
-        } catch (error) {
-            console.error(`Failed to sync: ${operation.method} ${operation.endpoint}`, error);
-        }
+        }));
     }
 
     updateSyncStatus('', 'synced');
@@ -570,16 +581,16 @@ initIndexedDB().catch(error => console.error('Failed to initialize IndexedDB:', 
 // --- DASHBOARD ---
 async function loadDashboard() {
     const dateFilter = document.getElementById('dashboardDateFilter').value || '';
-    
+
     // Try to load from cache first for instant UI
     const cachedProducts = await getFromIndexedDB('inventory');
     if (cachedProducts && cachedProducts.length > 0) {
         renderDashboard(
-            cachedProducts, 
-            [], 
-            [], 
-            { total_sales: 0, total_revenue: 0, credit_amount: 0, pending_amount: 0, paid_amount: 0 }, 
-            { total_revenue: 0, total_expenses: 0 }, 
+            cachedProducts,
+            [],
+            [],
+            { total_sales: 0, total_revenue: 0, credit_amount: 0, pending_amount: 0, paid_amount: 0 },
+            { total_revenue: 0, total_expenses: 0 },
             []
         );
     }
@@ -594,9 +605,9 @@ async function loadDashboard() {
             renderDashboard(
                 data.inventory_stats || {}, // New optimized stats
                 data.low_stock_products || [], // Limited list
-                data.transactions, 
-                data.sales_summary, 
-                data.metrics, 
+                data.transactions,
+                data.sales_summary,
+                data.metrics,
                 data.recent_sales
             );
         } else {
@@ -614,7 +625,7 @@ async function loadDashboard() {
         if (!cachedProducts || cachedProducts.length === 0) {
             const errorMsg = error.message.includes('Authentication') ? 'Session expired. Please login again.' : 'Error loading dashboard data';
             showNotification(errorMsg, 'error');
-            
+
             if (error.message.includes('Authentication')) {
                 setTimeout(() => window.location.href = '/login', 2000);
             }
@@ -626,7 +637,7 @@ async function loadDashboard() {
 function renderDashboard(inventoryStats, lowStockProducts, transactions, salesSummary, metrics, recentSales) {
     // Check if we're using old products array or new stats object
     let totalItems, lowStock, healthyStock, totalUnits;
-    
+
     if (inventoryStats && inventoryStats.total_items !== undefined) {
         // Optimized path
         totalItems = inventoryStats.total_items;
@@ -674,9 +685,9 @@ function renderDashboard(inventoryStats, lowStockProducts, transactions, salesSu
 
     // Low stock items
     const lowStockTable = document.getElementById('lowStockTable');
-    const displayItems = Array.isArray(lowStockProducts) ? lowStockProducts : 
-                         (Array.isArray(inventoryStats) ? inventoryStats.filter(p => p.quantity <= p.reorder_level) : []);
-    
+    const displayItems = Array.isArray(lowStockProducts) ? lowStockProducts :
+        (Array.isArray(inventoryStats) ? inventoryStats.filter(p => p.quantity <= p.reorder_level) : []);
+
     lowStockTable.innerHTML = displayItems.map((item, index) => `
         <tr>
             <td>${index + 1}</td>
@@ -941,8 +952,13 @@ async function loadTransactions() {
         if (type !== 'All') url.searchParams.append('type', type);
 
         const response = await fetch(url);
-        const transactions = await response.json();
+        const result = await response.json();
 
+        if (!response.ok || !Array.isArray(result)) {
+            throw new Error(result.error || 'Failed to load transactions');
+        }
+
+        const transactions = result;
         const table = document.getElementById('transactionsTable');
         table.innerHTML = transactions.map((tx, index) => `
             <tr>
@@ -1249,22 +1265,22 @@ document.getElementById('addUserForm')?.addEventListener('submit', async (e) => 
 async function toggleUserActive(userId) {
     confirmAction('Change user status?', async () => {
 
-    try {
-        const response = await fetch(`/api/users/${userId}/toggle-active`, {
-            method: 'POST'
-        });
-        const data = await response.json();
+        try {
+            const response = await fetch(`/api/users/${userId}/toggle-active`, {
+                method: 'POST'
+            });
+            const data = await response.json();
 
-        if (data.success) {
-            showNotification(data.message, 'success');
-            loadUsers();
-        } else {
-            showNotification(data.error, 'error');
+            if (data.success) {
+                showNotification(data.message, 'success');
+                loadUsers();
+            } else {
+                showNotification(data.error, 'error');
+            }
+        } catch (error) {
+            console.error('Error toggling user:', error);
+            showNotification('Error updating user status', 'error');
         }
-    } catch (error) {
-        console.error('Error toggling user:', error);
-        showNotification('Error updating user status', 'error');
-    }
     });
 }
 
@@ -1288,22 +1304,22 @@ async function performLocalBackup() {
 async function deleteUser(userId) {
     confirmAction('Are you sure you want to delete this user? This cannot be undone.', async () => {
 
-    try {
-        const response = await fetch(`/api/users/${userId}`, {
-            method: 'DELETE'
-        });
-        const data = await response.json();
+        try {
+            const response = await fetch(`/api/users/${userId}`, {
+                method: 'DELETE'
+            });
+            const data = await response.json();
 
-        if (data.success) {
-            showNotification('User deleted successfully', 'success');
-            loadUsers();
-        } else {
-            showNotification(data.error, 'error');
+            if (data.success) {
+                showNotification('User deleted successfully', 'success');
+                loadUsers();
+            } else {
+                showNotification(data.error, 'error');
+            }
+        } catch (error) {
+            console.error('Error deleting user:', error);
+            showNotification('Error deleting user', 'error');
         }
-    } catch (error) {
-        console.error('Error deleting user:', error);
-        showNotification('Error deleting user', 'error');
-    }
     });
 }
 
@@ -1597,7 +1613,7 @@ function confirmDelete(id, type, name) {
 
 document.getElementById('confirmBtn').addEventListener('click', async () => {
     if (!deleteData.id) return;
-    
+
     // Disable button to prevent double-click
     const confirmBtn = document.getElementById('confirmBtn');
     const originalText = confirmBtn.textContent;
