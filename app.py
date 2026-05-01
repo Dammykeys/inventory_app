@@ -17,14 +17,25 @@ app = Flask(__name__)
 app.config['DATABASE_URL'] = os.environ.get('DATABASE_URL')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
-# Initialize Connection Pool
-db_pool = pool.ThreadedConnectionPool(
-    1, 20, # min, max connections
-    app.config['DATABASE_URL']
-)
+# Initialize Connection Pool Safely
+db_pool = None
+try:
+    if app.config['DATABASE_URL']:
+        db_pool = pool.ThreadedConnectionPool(
+            1, 20, # min, max connections
+            app.config['DATABASE_URL']
+        )
+        print("Database connection pool initialized.")
+    else:
+        print("WARNING: DATABASE_URL not found in environment.")
+except Exception as e:
+    print(f"CRITICAL: Failed to initialize database pool: {e}")
 
 def get_db_connection():
     """Get a connection from the pool and ensure it is still alive"""
+    if not db_pool:
+        raise Exception("Database connection pool is not initialized. Check your DATABASE_URL.")
+    
     conn = db_pool.getconn()
     try:
         # Check if connection is still alive
@@ -38,93 +49,115 @@ def get_db_connection():
 
 def release_db_connection(conn):
     """Return a connection to the pool"""
+    if not db_pool or not conn:
+        return
     try:
         db_pool.putconn(conn)
     except Exception as e:
         print(f"Error releasing connection: {e}")
 
 def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    if not db_pool:
+        print("Skipping init_db: No database pool available.")
+        return
     
-    cursor.execute('''CREATE TABLE IF NOT EXISTS products 
-                      (id SERIAL PRIMARY KEY, 
-                       name TEXT UNIQUE, 
-                       quantity INTEGER, 
-                       reorder_level INTEGER, 
-                       price DOUBLE PRECISION DEFAULT 0, 
-                       brand TEXT)''')
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cursor.execute('''CREATE TABLE IF NOT EXISTS products 
+                          (id SERIAL PRIMARY KEY, 
+                           name TEXT UNIQUE, 
+                           quantity INTEGER, 
+                           reorder_level INTEGER, 
+                           price DOUBLE PRECISION DEFAULT 0, 
+                           brand TEXT)''')
+        
+        cursor.execute('''CREATE TABLE IF NOT EXISTS transactions 
+                          (id SERIAL PRIMARY KEY, 
+                           item_name TEXT, 
+                           quantity INTEGER, 
+                           type TEXT, 
+                           date TEXT, 
+                           time TEXT)''')
+        
+        cursor.execute('''CREATE TABLE IF NOT EXISTS sales 
+                          (id SERIAL PRIMARY KEY, 
+                           sale_num TEXT UNIQUE, 
+                           customer TEXT, 
+                           date TEXT, 
+                           time TEXT, 
+                           total_amount DOUBLE PRECISION, 
+                           payment_status TEXT)''')
+        
+        cursor.execute('''CREATE TABLE IF NOT EXISTS sale_items 
+                          (id SERIAL PRIMARY KEY, 
+                           sale_num TEXT, 
+                           item_name TEXT, 
+                           quantity INTEGER, 
+                           price DOUBLE PRECISION, 
+                           total DOUBLE PRECISION)''')
     
-    cursor.execute('''CREATE TABLE IF NOT EXISTS transactions 
-                      (id SERIAL PRIMARY KEY, 
-                       item_name TEXT, 
-                       quantity INTEGER, 
-                       type TEXT, 
-                       date TEXT, 
-                       time TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS expenses 
+                          (id SERIAL PRIMARY KEY, 
+                           description TEXT, 
+                           category TEXT, 
+                           amount DOUBLE PRECISION, 
+                           date TEXT, 
+                           time TEXT, 
+                           notes TEXT)''')
+        
+        # Users Table
+        cursor.execute('''CREATE TABLE IF NOT EXISTS users 
+                          (id SERIAL PRIMARY KEY, 
+                           username TEXT UNIQUE NOT NULL,
+                           password_hash TEXT NOT NULL,
+                           full_name TEXT,
+                           email TEXT,
+                           role TEXT NOT NULL DEFAULT 'staff',
+                           created_at TEXT,
+                           is_active BOOLEAN DEFAULT TRUE)''')
     
-    cursor.execute('''CREATE TABLE IF NOT EXISTS sales 
-                      (id SERIAL PRIMARY KEY, 
-                       sale_num TEXT UNIQUE, 
-                       customer TEXT, 
-                       date TEXT, 
-                       time TEXT, 
-                       total_amount DOUBLE PRECISION, 
-                       payment_status TEXT)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS activity_log 
+                          (id SERIAL PRIMARY KEY, 
+                           user_id INTEGER, 
+                           username TEXT, 
+                           action TEXT, 
+                           details TEXT, 
+                           timestamp TEXT)''')
     
-    cursor.execute('''CREATE TABLE IF NOT EXISTS sale_items 
-                      (id SERIAL PRIMARY KEY, 
-                       sale_num TEXT, 
-                       item_name TEXT, 
-                       quantity INTEGER, 
-                       price DOUBLE PRECISION, 
-                       total DOUBLE PRECISION)''')
+        # Create default admin if not exists
+        cursor.execute("SELECT * FROM users WHERE username=%s", ('admin',))
+        if not cursor.fetchone():
+            admin_hash = generate_password_hash('admin123')
+            created_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute("""INSERT INTO users (username, password_hash, full_name, email, role, created_at, is_active)
+                             VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                          ('admin', admin_hash, 'Administrator', 'admin@inventory.local', 'admin', created_at, True))
+            print("Default admin account created.")
+        
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sales_date ON sales (date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses (date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products (name)")
+        
+        conn.commit()
+        print("Database schema initialized successfully.")
+    except Exception as e:
+        print(f"Error during init_db: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            release_db_connection(conn)
 
-    cursor.execute('''CREATE TABLE IF NOT EXISTS expenses 
-                      (id SERIAL PRIMARY KEY, 
-                       description TEXT, 
-                       category TEXT, 
-                       amount DOUBLE PRECISION, 
-                       date TEXT, 
-                       time TEXT, 
-                       notes TEXT)''')
-    
-    # Users Table
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users 
-                      (id SERIAL PRIMARY KEY, 
-                       username TEXT UNIQUE NOT NULL,
-                       password_hash TEXT NOT NULL,
-                       full_name TEXT,
-                       email TEXT,
-                       role TEXT NOT NULL DEFAULT 'staff',
-                       created_at TEXT,
-                       is_active BOOLEAN DEFAULT TRUE)''')
-
-    cursor.execute('''CREATE TABLE IF NOT EXISTS activity_log 
-                      (id SERIAL PRIMARY KEY, 
-                       user_id INTEGER, 
-                       username TEXT, 
-                       action TEXT, 
-                       details TEXT, 
-                       timestamp TEXT)''')
-
-    # Create default admin if not exists
-    cursor.execute("SELECT * FROM users WHERE username=%s", ('admin',))
-    if not cursor.fetchone():
-        admin_hash = generate_password_hash('admin123')
-        created_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute("""INSERT INTO users (username, password_hash, full_name, email, role, created_at, is_active)
-                         VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-                      ('admin', admin_hash, 'Administrator', 'admin@inventory.local', 'admin', created_at, True))
-        print("Default admin account created.")
-    
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sales_date ON sales (date)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses (date)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products (name)")
-    
-    conn.commit()
-    release_db_connection(conn)
+# Safely run init_db
+with app.app_context():
+    try:
+        init_db()
+    except Exception as e:
+        print(f"Safe init_db failed: {e}")
 
 # --- AUTHENTICATION HELPERS ---
 def login_required(f):
@@ -141,21 +174,27 @@ def admin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'user_id' not in session:
-            return jsonify({'success': False, 'error': 'Authentication required'}), 401
+            if request.path.startswith('/api/'):
+                return jsonify({'success': False, 'error': 'Authentication required'}), 401
+            return redirect(url_for('login'))
         
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute('SELECT role FROM users WHERE id = %s', (session['user_id'],))
-        user = cursor.fetchone()
-        release_db_connection(conn)
-        
-        if not user or user['role'] != 'admin':
-            return jsonify({'success': False, 'error': 'Admin privileges required'}), 403
-        return f(*args, **kwargs)
+        conn = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute('SELECT role FROM users WHERE id = %s', (session['user_id'],))
+            user = cursor.fetchone()
+            if not user or user['role'] != 'admin':
+                return jsonify({'success': False, 'error': 'Admin privileges required'}), 403
+            return f(*args, **kwargs)
+        except Exception as e:
+            print(f"Auth check error: {e}")
+            return jsonify({'success': False, 'error': 'Internal authentication error'}), 500
+        finally:
+            if conn:
+                release_db_connection(conn)
     return decorated_function
 
-# Run init_db once
-init_db()
 
 # --- ACTIVITY LOG HELPER ---
 def log_activity(action, details=""):
