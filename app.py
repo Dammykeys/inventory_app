@@ -14,7 +14,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
-app.config['DATABASE_URL'] = os.environ.get('DATABASE_URL')
+# Configure Database URL with fix for common 'postgres://' prefix issue
+db_url = os.environ.get('DATABASE_URL')
+if db_url and db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+app.config['DATABASE_URL'] = db_url
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
 # Initialize Connection Pool Safely
@@ -30,6 +35,7 @@ try:
         print("WARNING: DATABASE_URL not found in environment.")
 except Exception as e:
     print(f"CRITICAL: Failed to initialize database pool: {e}")
+
 
 def get_db_connection():
     """Get a connection from the pool and ensure it is still alive"""
