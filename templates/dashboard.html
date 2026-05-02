@@ -92,28 +92,28 @@
                     <input type="date" id="dashboardDateFilter" class="search-box">
                 </div>
                 <div class="stats-grid">
-                    <div class="stat-card">
+                    <div class="stat-card clickable-card" onclick="showPage('inventory')">
                         <i class="fas fa-boxes"></i>
                         <div>
                             <h3>Total Items</h3>
                             <p class="stat-value" id="totalItems">0</p>
                         </div>
                     </div>
-                    <div class="stat-card">
+                    <div class="stat-card clickable-card alert" onclick="showPage('lowStockItems')">
                         <i class="fas fa-exclamation-triangle"></i>
                         <div>
                             <h3>Low Stock</h3>
                             <p class="stat-value alert" id="lowStock">0</p>
                         </div>
                     </div>
-                    <div class="stat-card">
+                    <div class="stat-card clickable-card" onclick="showPage('inventory')">
                         <i class="fas fa-check-circle"></i>
                         <div>
                             <h3>Healthy Stock</h3>
                             <p class="stat-value success" id="healthyStock">0</p>
                         </div>
                     </div>
-                    <div class="stat-card">
+                    <div class="stat-card clickable-card" onclick="showPage('inventory')">
                         <i class="fas fa-exchange-alt"></i>
                         <div>
                             <h3>Total Units</h3>
@@ -123,42 +123,42 @@
                 </div>
 
                 <div class="sales-stats-grid">
-                    <div class="stat-card">
+                    <div class="stat-card clickable-card" onclick="showPage('sales')">
                         <i class="fas fa-shopping-cart" style="color: var(--primary-color);"></i>
                         <div>
                             <h3>Today's Sales</h3>
                             <p class="stat-value" id="todaysSales">0</p>
                         </div>
                     </div>
-                    <div class="stat-card">
+                    <div class="stat-card clickable-card" onclick="showPage('sales')">
                         <i class="fas fa-money-bill-wave" style="color: var(--secondary-color);"></i>
                         <div>
                             <h3>Total Revenue</h3>
                             <p class="stat-value" id="totalRevenue">₦0.00</p>
                         </div>
                     </div>
-                    <div class="stat-card">
+                    <div class="stat-card clickable-card" onclick="showPage('expenses')">
                         <i class="fas fa-receipt" style="color: var(--danger-color);"></i>
                         <div>
                             <h3>Total Expenses</h3>
                             <p class="stat-value" id="totalExpenses">₦0.00</p>
                         </div>
                     </div>
-                    <div class="stat-card">
+                    <div class="stat-card clickable-card" onclick="showPage('sales')">
                         <i class="fas fa-handshake" style="color: #f59e0b;"></i>
                         <div>
                             <h3>Total Credit</h3>
                             <p class="stat-value" id="totalCredit">₦0.00</p>
                         </div>
                     </div>
-                    <div class="stat-card">
+                    <div class="stat-card clickable-card" onclick="showPage('sales')">
                         <i class="fas fa-clock" style="color: #ef4444;"></i>
                         <div>
                             <h3>Total Pending</h3>
                             <p class="stat-value" id="totalPending">₦0.00</p>
                         </div>
                     </div>
-                    <div class="stat-card">
+                    <div class="stat-card clickable-card" onclick="showPage('sales')">
                         <i class="fas fa-check-double" style="color: #059669;"></i>
                         <div>
                             <h3>Realized Payment</h3>
@@ -168,8 +168,11 @@
                 </div>
 
                 <div class="dashboard-grid">
-                    <div class="card">
-                        <h3>Recent Low Stock Items</h3>
+                    <div class="card clickable-card" onclick="showPage('lowStockItems')">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
+                            <h3 style="margin: 0;">Recent Low Stock Items</h3>
+                            <a href="#" class="view-all-link" onclick="event.stopPropagation(); showPage('lowStockItems'); return false;">View All <i class="fas fa-arrow-right"></i></a>
+                        </div>
                         <div class="table-responsive">
                             <table>
                                 <thead>
@@ -186,8 +189,11 @@
                             </table>
                         </div>
                     </div>
-                    <div class="card">
-                        <h3>Recent Transactions</h3>
+                    <div class="card clickable-card" onclick="showPage('transactions')">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
+                            <h3 style="margin: 0;">Recent Transactions</h3>
+                            <a href="#" class="view-all-link" onclick="event.stopPropagation(); showPage('transactions'); return false;">View All <i class="fas fa-arrow-right"></i></a>
+                        </div>
                         <div class="table-responsive">
                             <table>
                                 <thead>
@@ -206,8 +212,11 @@
                     </div>
                 </div>
 
-                <div class="card" style="margin-top: 20px;">
-                    <h3>Recent Sales & Credit</h3>
+                <div class="card clickable-card" style="margin-top: 20px;" onclick="showPage('sales')">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
+                        <h3 style="margin: 0;">Recent Sales & Credit</h3>
+                        <a href="#" class="view-all-link" onclick="event.stopPropagation(); showPage('sales'); return false;">View All <i class="fas fa-arrow-right"></i></a>
+                    </div>
                     <div class="table-responsive">
                         <table>
                             <thead>
@@ -231,8 +240,13 @@
             <section id="inventory" class="page">
                 <div class="page-header">
                     <h2>Inventory List</h2>
-                    <input type="text" id="searchInventory" placeholder="Search items..." list="saleItemSuggestions"
-                        class="search-box">
+                    <div class="header-actions">
+                        <input type="text" id="searchInventory" placeholder="Search items..." list="saleItemSuggestions"
+                            class="search-box">
+                        <button class="btn btn-secondary" onclick="toggleLowStockFilter()">
+                            <i class="fas fa-filter"></i> <span id="lowStockFilterText">Show Only Low Stock</span>
+                        </button>
+                    </div>
                 </div>
                 <div class="card">
                     <div class="table-responsive">
@@ -249,6 +263,40 @@
                                 </tr>
                             </thead>
                             <tbody id="inventoryTable">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Full Low Stock Items Page -->
+            <section id="lowStockItems" class="page">
+                <div class="page-header">
+                    <div style="display: flex; align-items: center; gap: 1rem;">
+                        <button class="btn btn-secondary btn-small" onclick="showPage('dashboard')">
+                            <i class="fas fa-arrow-left"></i> Back
+                        </button>
+                        <h2>All Low Stock Items</h2>
+                    </div>
+                    <button class="btn btn-primary" onclick="window.print()">
+                        <i class="fas fa-print"></i> Print List
+                    </button>
+                </div>
+                <div class="card">
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>S/N</th>
+                                    <th>Item Name</th>
+                                    <th>Brand</th>
+                                    <th>Current Stock</th>
+                                    <th>Reorder Level</th>
+                                    <th>Deficit</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="fullLowStockTable">
                             </tbody>
                         </table>
                     </div>

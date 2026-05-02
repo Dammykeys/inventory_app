@@ -477,6 +477,57 @@ body {
     color: var(--text-main);
 }
 
+.clickable-card {
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.clickable-card:hover {
+    transform: translateY(-5px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--primary-light);
+}
+
+.clickable-card::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 4px;
+    height: 100%;
+    background: var(--primary);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.clickable-card:hover::after {
+    opacity: 1;
+}
+
+.view-all-link {
+    font-size: 0.8125rem;
+    color: var(--primary);
+    text-decoration: none;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: all 0.2s ease;
+}
+
+.view-all-link:hover {
+    color: var(--primary-dark);
+    gap: 0.75rem;
+}
+
+.header-actions {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+}
+
 /* --- DASHBOARD GRID --- */
 .dashboard-grid {
     display: grid;
@@ -1127,6 +1178,25 @@ tbody tr:hover {
         padding: 1rem;
     }
 
+    .page-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .header-actions {
+        width: 100%;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .header-actions .search-box, 
+    .header-actions .btn {
+        width: 100%;
+        margin: 0;
+    }
+
     .stats-grid, .sales-stats-grid {
         grid-template-columns: repeat(2, 1fr);
         gap: 0.75rem;
@@ -1153,54 +1223,57 @@ tbody tr:hover {
         grid-template-columns: 1fr;
     }
 
-    /* Table to Card View */
+    /* Keep tables as lists with horizontal scroll instead of cards */
     .table-responsive {
-        border: none;
-        overflow: visible;
-    }
-
-    table, thead, tbody, th, td, tr {
-        display: block;
-    }
-
-    thead {
-        display: none;
-    }
-
-    tr {
-        margin-bottom: 1.5rem;
-        border-radius: var(--radius);
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        margin-bottom: 1rem;
         background: white;
-        box-shadow: var(--shadow-md);
+        border-radius: var(--radius);
         border: 1px solid var(--border);
-        overflow: hidden;
     }
 
-    td {
-        border: none;
-        border-bottom: 1px solid var(--bg-main);
-        padding: 0.75rem 1rem;
-        text-align: right;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        font-size: 0.875rem;
+    table {
+        min-width: 600px; /* Force minimum width to ensure scrollability */
+        border-collapse: separate;
+        border-spacing: 0;
     }
 
-    td:last-child {
-        border-bottom: none;
+    th, td {
+        white-space: nowrap;
+        padding: 0.75rem;
+    }
+
+    /* Sticky S/N column */
+    th:first-child, 
+    td:first-child {
+        position: sticky;
+        left: 0;
+        z-index: 10;
+        background-color: inherit;
+        box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+    }
+
+    /* Specific background for sticky cells to prevent transparency issues */
+    td:first-child {
+        background-color: white;
+    }
+    
+    th:first-child {
         background-color: var(--bg-main);
-        justify-content: center;
-        padding: 0.5rem;
     }
 
-    td::before {
-        content: attr(data-label);
-        font-weight: 600;
-        color: var(--text-muted);
-        text-transform: uppercase;
-        font-size: 0.65rem;
-        text-align: left;
+    /* Highlight low stock rows on the sticky column */
+    .low-stock-row td:first-child {
+        color: var(--danger);
+        font-weight: 700;
+        border-left: 4px solid var(--danger);
+        background-color: #fff1f2; /* Very light red tint */
+    }
+
+    .low-stock-row {
+        background-color: #fffafb;
     }
 }
 

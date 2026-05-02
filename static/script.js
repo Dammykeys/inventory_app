@@ -213,11 +213,74 @@ document.addEventListener('DOMContentLoaded', () => {
         const updateStatusForm = document.getElementById('updateStatusForm');
         if (updateStatusForm) updateStatusForm.addEventListener('submit', handleUpdateStatusSubmit);
 
+        const filterSalesRecordsBtn = document.getElementById('filterSalesRecordsBtn');
+        if (filterSalesRecordsBtn) {
+            filterSalesRecordsBtn.addEventListener('click', () => {
+                loadSalesRecords();
+            });
+        }
+
+        const searchSalesBtn = document.getElementById('searchSalesBtn');
+        if (searchSalesBtn) {
+            searchSalesBtn.addEventListener('click', async () => {
+                const customerEl = document.getElementById('searchCustomer');
+                const dateEl = document.getElementById('salesHistoryDate');
+                if (!customerEl || !dateEl) return;
+                
+                const customer = customerEl.value.trim();
+                const date = dateEl.value;
+
+                try {
+                    const response = await fetch(`/api/search-sales?customer=${customer}&date=${date}`);
+                    const sales = await response.json();
+                    renderSearchResults(sales);
+                } catch (error) {
+                    console.error('Error searching sales:', error);
+                    showNotification('Error searching sales', 'error');
+                }
+            });
+        }
+
         console.log('Other forms listeners attached');
     } catch (err) {
         console.error('Error during Other Forms initialization:', err);
     }
 });
+
+function renderSearchResults(sales) {
+    const table = document.getElementById('salesRecordsTable');
+    if (!table) return;
+    
+    table.innerHTML = sales.map((sale, index) => {
+        const statusColor = sale.payment_status.toLowerCase();
+        return `
+            <tr>
+                <td>${index + 1}</td>
+                <td><strong>${sale.sale_num}</strong></td>
+                <td>${sale.customer}</td>
+                <td>${sale.date}</td>
+                <td>₦${parseFloat(sale.total_amount).toFixed(2)}</td>
+                <td>
+                    <span class="payment-status-badge ${statusColor}">
+                        ${sale.payment_status}
+                    </span>
+                </td>
+                <td>
+                    <div class="action-buttons">
+                        <button class="action-btn edit" onclick="viewSaleDetails('${sale.sale_num}')">View</button>
+                        ${sale.payment_status === 'Credit' ? `<button class="action-btn success" onclick="quickUpdateStatus('${sale.sale_num}', 'Paid')">Mark Paid</button>` : ''}
+                        ${sale.payment_status === 'Pending' ? `<button class="action-btn success" onclick="quickUpdateStatus('${sale.sale_num}', 'Paid')">Mark Paid</button>` : ''}
+                        <button class="action-btn delete" onclick="confirmDeleteSale('${sale.sale_num}')">Delete</button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    if (sales.length === 0) {
+        table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No sales found</td></tr>';
+    }
+}
 
 // Stub for reorder form submit handler
 function handleReorderSubmit(event) {
@@ -288,6 +351,14 @@ function showPage(pageName) {
     // Persist current page across refreshes
     localStorage.setItem('activePage', pageName);
 
+    // Update active state for both sidebar and bottom nav
+    document.querySelectorAll('.nav-item, .bottom-nav-item').forEach(nav => {
+        nav.classList.remove('active');
+        if (nav.getAttribute('data-page') === pageName) {
+            nav.classList.add('active');
+        }
+    });
+
     if (pageName === 'dashboard') loadDashboard();
     if (pageName === 'inventory') loadInventory();
     if (pageName === 'transactions') loadTransactions();
@@ -302,6 +373,73 @@ function showPage(pageName) {
     if (pageName === 'expenses') {
         loadExpenses();
         loadExpensesSummary();
+    }
+    if (pageName === 'lowStockItems') {
+        loadLowStockItems();
+    }
+}
+
+// Full Low Stock Items
+async function loadLowStockItems() {
+    const table = document.getElementById('fullLowStockTable');
+    table.innerHTML = '<tr><td colspan="7" style="text-align:center;"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>';
+
+    try {
+        const response = await fetch('/api/low-stock');
+        const data = await response.json();
+
+        if (data.success) {
+            table.innerHTML = data.products.map((item, index) => {
+                const deficit = item.reorder_level - item.quantity;
+                return `
+                    <tr class="low-stock-row">
+                        <td>${index + 1}</td>
+                        <td><strong>${item.name}</strong></td>
+                        <td>${item.brand || '-'}</td>
+                        <td><span class="status-badge danger">${item.quantity}</span></td>
+                        <td>${item.reorder_level}</td>
+                        <td><span style="color: var(--danger); font-weight: 600;">${deficit}</span></td>
+                        <td>
+                            <div class="action-buttons">
+                                <button class="action-btn edit" onclick="openReorderModal('${item.name}', ${item.reorder_level})">Update Level</button>
+                                <button class="action-btn success" onclick="showPage('entry'); document.getElementById('itemName').value='${item.name}';">Restock</button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            if (data.products.length === 0) {
+                table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No low stock items found. All good!</td></tr>';
+            }
+        } else {
+            throw new Error(data.error);
+        }
+    } catch (error) {
+        console.error('Error loading low stock items:', error);
+        table.innerHTML = `<tr><td colspan="7" style="text-align:center; color: var(--danger);">Error: ${error.message}</td></tr>`;
+    }
+}
+
+let isLowStockFiltered = false;
+function toggleLowStockFilter() {
+    isLowStockFiltered = !isLowStockFiltered;
+    const btnText = document.getElementById('lowStockFilterText');
+    const rows = document.querySelectorAll('#inventoryTable tr');
+
+    if (isLowStockFiltered) {
+        btnText.textContent = 'Show All Items';
+        rows.forEach(row => {
+            const status = row.querySelector('.status-badge');
+            if (status && !status.classList.contains('danger')) {
+                row.style.display = 'none';
+            } else {
+                row.style.display = '';
+            }
+        });
+    } else {
+        btnText.textContent = 'Show Only Low Stock';
+        rows.forEach(row => row.style.display = '');
     }
 }
 
@@ -373,7 +511,7 @@ window.alert = function (message) {
 // ==================== OFFLINE FUNCTIONALITY ====================
 // IndexedDB Setup
 const DB_NAME = 'InventoryAppDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 let db;
 
 // Initialize IndexedDB
@@ -402,6 +540,9 @@ async function initIndexedDB() {
             }
             if (!db.objectStoreNames.contains('transactions')) {
                 db.createObjectStore('transactions', { keyPath: 'id' });
+            }
+            if (!db.objectStoreNames.contains('dashboard')) {
+                db.createObjectStore('dashboard', { keyPath: 'id' });
             }
             if (!db.objectStoreNames.contains('syncQueue')) {
                 db.createObjectStore('syncQueue', { keyPath: 'id', autoIncrement: true });
@@ -581,35 +722,46 @@ initIndexedDB().catch(error => console.error('Failed to initialize IndexedDB:', 
 // --- DASHBOARD ---
 async function loadDashboard() {
     const dateFilter = document.getElementById('dashboardDateFilter').value || '';
+    const cacheKey = `dashboard_${dateFilter || 'all'}`;
 
-    // Try to load from cache first for instant UI
-    const cachedProducts = await getFromIndexedDB('inventory');
-    if (cachedProducts && cachedProducts.length > 0) {
-        renderDashboard(
-            cachedProducts,
-            [],
-            [],
-            { total_sales: 0, total_revenue: 0, credit_amount: 0, pending_amount: 0, paid_amount: 0 },
-            { total_revenue: 0, total_expenses: 0 },
-            []
-        );
+    // 1. Try to load from cache first for instant UI
+    try {
+        const cachedData = await getFromIndexedDB('dashboard');
+        const latestCache = cachedData.find(d => d.id === cacheKey);
+        if (latestCache) {
+            renderDashboard(
+                latestCache.data.inventory_stats,
+                latestCache.data.low_stock_products,
+                latestCache.data.transactions,
+                latestCache.data.sales_summary,
+                latestCache.data.metrics,
+                latestCache.data.recent_sales
+            );
+            console.log('Dashboard rendered from cache');
+        }
+    } catch (err) {
+        console.warn('Cache load failed:', err);
     }
 
+    // 2. Fetch fresh data in the background
     try {
-        // Fetch all dashboard data in a single optimized call
         const response = await fetch(`/api/dashboard-combined${dateFilter ? `?date=${dateFilter}` : ''}`);
         const data = await response.json();
 
         if (data.success) {
-            // Render with fresh data from the single response
+            // Update UI with fresh data
             renderDashboard(
-                data.inventory_stats || {}, // New optimized stats
-                data.low_stock_products || [], // Limited list
+                data.inventory_stats,
+                data.low_stock_products,
                 data.transactions,
                 data.sales_summary,
                 data.metrics,
                 data.recent_sales
             );
+            
+            // Save to cache for next time
+            await saveToIndexedDB('dashboard', { id: cacheKey, data: data, timestamp: new Date().getTime() });
+            console.log('Dashboard updated from network and cached');
         } else {
             // Handle specific errors from the API
             if (data.error === 'Authentication required') {
@@ -744,27 +896,59 @@ function renderDashboard(inventoryStats, lowStockProducts, transactions, salesSu
 
 // --- INVENTORY ---
 async function loadInventory() {
+    // 1. Show cached data immediately
+    try {
+        const cachedProducts = await getFromIndexedDB('inventory');
+        if (cachedProducts && cachedProducts.length > 0) {
+            renderInventory(cachedProducts);
+            updateItemSuggestions(cachedProducts);
+            console.log('Inventory rendered from cache');
+        }
+    } catch (err) {
+        console.warn('Inventory cache load failed:', err);
+    }
+
+    // 2. Fetch fresh data in background
     try {
         const response = await fetch('/api/inventory');
-        let products = await response.json();
+        const products = await response.json();
 
-        // Save to IndexedDB
-        await saveToIndexedDB('inventory', products);
+        if (Array.isArray(products)) {
+            renderInventory(products);
+            updateItemSuggestions(products);
+            
+            // Clear and update cache
+            // Note: In a real app we might want a more sophisticated cache update
+            await saveToIndexedDB('inventory', products);
+            console.log('Inventory updated from network and cached');
+        }
+    } catch (error) {
+        console.error('Error loading inventory:', error);
+        if (!navigator.onLine) {
+            showNotification('Offline - showing cached data', 'info');
+        } else {
+            showNotification('Error updating inventory', 'error');
+        }
+    }
+}
 
-        // Update item suggestions
-        updateItemSuggestions(products);
+// Helper to render inventory table
+function renderInventory(products) {
+    const table = document.getElementById('inventoryTable');
+    if (!table) return;
 
-        const table = document.getElementById('inventoryTable');
-        table.innerHTML = products.map((item, index) => `
-            <tr>
+    table.innerHTML = products.map((item, index) => {
+        const isLow = item.quantity <= item.reorder_level;
+        return `
+            <tr class="${isLow ? 'low-stock-row' : ''}">
                 <td>${index + 1}</td>
                 <td>${item.name}</td>
                 <td>${item.brand || '-'}</td>
                 <td>${item.quantity}</td>
                 <td>${item.reorder_level}</td>
                 <td>
-                    <span class="status-badge ${item.quantity <= item.reorder_level ? 'danger' : 'healthy'}">
-                        ${item.quantity <= item.reorder_level ? 'Low Stock' : 'Healthy'}
+                    <span class="status-badge ${isLow ? 'danger' : 'healthy'}">
+                        ${isLow ? 'Low Stock' : 'Healthy'}
                     </span>
                 </td>
                 <td>
@@ -773,53 +957,29 @@ async function loadInventory() {
                     </div>
                 </td>
             </tr>
-        `).join('');
+        `;
+    }).join('');
 
-        if (products.length === 0) {
-            table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No items in inventory</td></tr>';
-        }
-
-        // Setup search
-        document.getElementById('searchInventory').addEventListener('keyup', () => {
-            const searchTerm = document.getElementById('searchInventory').value.toLowerCase();
-            document.querySelectorAll('#inventoryTable tr').forEach(row => {
-                const text = row.textContent.toLowerCase();
-                row.style.display = text.includes(searchTerm) ? '' : 'none';
-            });
-        });
-    } catch (error) {
-        console.error('Error loading inventory:', error);
-        // Load from cache on error
-        const products = await getFromIndexedDB('inventory');
-        updateItemSuggestions(products);
-
-        const table = document.getElementById('inventoryTable');
-        if (products.length > 0) {
-            table.innerHTML = products.map((item, index) => `
-                <tr>
-                    <td>${index + 1}</td>
-                    <td>${item.name}</td>
-                    <td>${item.brand || '-'}</td>
-                    <td>${item.quantity}</td>
-                    <td>${item.reorder_level}</td>
-                    <td>
-                        <span class="status-badge ${item.quantity <= item.reorder_level ? 'danger' : 'healthy'}">
-                            ${item.quantity <= item.reorder_level ? 'Low Stock' : 'Healthy'}
-                        </span>
-                    </td>
-                    <td>
-                        <div class="action-buttons">
-                            <button class="action-btn edit" onclick="openReorderModal('${item.name}', ${item.reorder_level})">Update</button>
-                        </div>
-                    </td>
-                </tr>
-            `).join('');
-            showNotification('Showing cached inventory - offline mode', 'warning');
-        } else {
-            table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No cached inventory available</td></tr>';
-        }
-        showNotification('Error loading inventory', 'error');
+    if (products.length === 0) {
+        table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No items in inventory</td></tr>';
     }
+
+    // Re-setup search listener if needed (or just use event delegation)
+    setupInventorySearch();
+}
+
+function setupInventorySearch() {
+    const searchInput = document.getElementById('searchInventory');
+    if (!searchInput) return;
+
+    // Use a fresh listener
+    searchInput.onkeyup = () => {
+        const searchTerm = searchInput.value.toLowerCase();
+        document.querySelectorAll('#inventoryTable tr').forEach(row => {
+            const text = row.textContent.toLowerCase();
+            row.style.display = text.includes(searchTerm) ? '' : 'none';
+        });
+    };
 }
 
 // Update item suggestions for forms
@@ -2163,7 +2323,10 @@ async function handleUpdateStatusSubmit(e) {
         showNotification('Error updating status', 'error');
     }
 }
-document.getElementById('updateStatusForm').addEventListener('submit', handleUpdateStatusSubmit);
+const updateStatusForm = document.getElementById('updateStatusForm');
+if (updateStatusForm) {
+    updateStatusForm.addEventListener('submit', handleUpdateStatusSubmit);
+}
 
 async function quickUpdateStatus(saleNum, newStatus) {
     try {
@@ -2188,52 +2351,146 @@ async function quickUpdateStatus(saleNum, newStatus) {
     }
 }
 
-document.getElementById('searchSalesBtn').addEventListener('click', async () => {
-    const customer = document.getElementById('searchCustomer').value.trim();
-    const date = document.getElementById('salesHistoryDate').value;
+const searchSalesBtn = document.getElementById('searchSalesBtn');
+if (searchSalesBtn) {
+    searchSalesBtn.addEventListener('click', async () => {
+        const customer = document.getElementById('searchCustomer').value.trim();
+        const date = document.getElementById('salesHistoryDate').value;
+
+        try {
+            const url = new URL('/api/sales', window.location);
+            if (customer) url.searchParams.append('customer', customer);
+            if (date) url.searchParams.append('date', date);
+
+            const response = await fetch(url);
+            const sales = await response.json();
+
+            const table = document.getElementById('salesTable');
+            table.innerHTML = sales.map(sale => {
+                const statusColor = sale.payment_status.toLowerCase();
+                return `
+                    <tr>
+                        <td><strong>${sale.sale_num}</strong></td>
+                        <td>${sale.customer}</td>
+                        <td>${sale.date}</td>
+                        <td>₦${parseFloat(sale.total_amount).toFixed(2)}</td>
+                        <td>
+                            <span class="payment-status-badge ${statusColor}">
+                                ${sale.payment_status}
+                            </span>
+                        </td>
+                        <td>
+                            <div class="action-buttons">
+                                <button class="action-btn edit" onclick="viewSaleDetails('${sale.sale_num}')">View</button>
+                                ${sale.payment_status === 'Credit' ? `<button class="action-btn success" onclick="quickUpdateStatus('${sale.sale_num}', 'Paid')">Mark Paid</button>` : ''}
+                                ${sale.payment_status === 'Pending' ? `<button class="action-btn success" onclick="quickUpdateStatus('${sale.sale_num}', 'Paid')">Mark Paid</button>` : ''}
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            if (sales.length === 0) {
+                table.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--text-secondary);">No sales found</td></tr>';
+            }
+        } catch (error) {
+            console.error('Error searching sales:', error);
+            showNotification('Error searching sales', 'error');
+        }
+    });
+}
+
+const filterSalesRecordsBtn = document.getElementById('filterSalesRecordsBtn');
+if (filterSalesRecordsBtn) {
+    filterSalesRecordsBtn.addEventListener('click', () => {
+        loadSalesRecords();
+    });
+}
+
+// --- MODAL & FORM HANDLERS ---
+function openReorderModal(name, currentLevel) {
+    const itemEl = document.getElementById('quickReorderItem');
+    const levelEl = document.getElementById('quickReorderLevel');
+    const modalEl = document.getElementById('reorderModal');
+    
+    if (itemEl) itemEl.value = name;
+    if (levelEl) levelEl.value = currentLevel;
+    if (modalEl) modalEl.classList.add('show');
+}
+
+function closeReorderModal() {
+    const modalEl = document.getElementById('reorderModal');
+    if (modalEl) modalEl.classList.remove('show');
+}
+
+async function handleQuickReorderSubmit(e) {
+    e.preventDefault();
+    const nameEl = document.getElementById('quickReorderItem');
+    const levelEl = document.getElementById('quickReorderLevel');
+    if (!nameEl || !levelEl) return;
+
+    const name = nameEl.value;
+    const level = parseInt(levelEl.value);
 
     try {
-        const url = new URL('/api/sales', window.location);
-        if (customer) url.searchParams.append('customer', customer);
-        if (date) url.searchParams.append('date', date);
-
-        const response = await fetch(url);
-        const sales = await response.json();
-
-        const table = document.getElementById('salesTable');
-        table.innerHTML = sales.map(sale => {
-            const statusColor = sale.payment_status.toLowerCase();
-            return `
-                <tr>
-                    <td><strong>${sale.sale_num}</strong></td>
-                    <td>${sale.customer}</td>
-                    <td>${sale.date}</td>
-                    <td>₦${parseFloat(sale.total_amount).toFixed(2)}</td>
-                    <td>
-                        <span class="payment-status-badge ${statusColor}">
-                            ${sale.payment_status}
-                        </span>
-                    </td>
-                    <td>
-                        <div class="action-buttons">
-                            <button class="action-btn edit" onclick="viewSaleDetails('${sale.sale_num}')">View</button>
-                            ${sale.payment_status === 'Credit' ? `<button class="action-btn success" onclick="quickUpdateStatus('${sale.sale_num}', 'Paid')">Mark Paid</button>` : ''}
-                            ${sale.payment_status === 'Pending' ? `<button class="action-btn success" onclick="quickUpdateStatus('${sale.sale_num}', 'Paid')">Mark Paid</button>` : ''}
-                        </div>
-                    </td>
-                </tr>
-            `;
-        }).join('');
-
-        if (sales.length === 0) {
-            table.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--text-secondary);">No sales found</td></tr>';
+        const response = await fetch('/api/update-reorder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, level })
+        });
+        const result = await response.json();
+        if (result.success) {
+            showNotification('Reorder level updated successfully', 'success');
+            closeReorderModal();
+            loadInventory();
+            loadDashboard();
+            const lowStockPage = document.getElementById('lowStockItems');
+            if (lowStockPage && lowStockPage.classList.contains('active')) {
+                loadLowStockItems();
+            }
+        } else {
+            showNotification(result.error, 'error');
         }
     } catch (error) {
-        console.error('Error searching sales:', error);
-        showNotification('Error searching sales', 'error');
+        console.error('Error:', error);
+        showNotification('Error updating reorder level', 'error');
     }
-});
+}
 
-document.getElementById('filterSalesRecordsBtn').addEventListener('click', () => {
-    loadSalesRecords();
-});
+async function handleExpenseSubmit(e) {
+    e.preventDefault();
+    const descEl = document.getElementById('expenseDescription');
+    const catEl = document.getElementById('expenseCategory');
+    const amtEl = document.getElementById('expenseAmount');
+    const dateEl = document.getElementById('expenseDate');
+    const notesEl = document.getElementById('expenseNotes');
+
+    if (!descEl || !catEl || !amtEl || !dateEl) return;
+
+    const description = descEl.value.trim();
+    const category = catEl.value;
+    const amount = parseFloat(amtEl.value);
+    const date = dateEl.value;
+    const notes = notesEl ? notesEl.value.trim() : '';
+
+    try {
+        const response = await fetch('/api/add-expense', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ description, category, amount, date, notes })
+        });
+        const result = await response.json();
+        if (result.success) {
+            showNotification('Expense recorded successfully', 'success');
+            e.target.reset();
+            loadExpenses();
+            loadExpensesSummary();
+            loadDashboard();
+        } else {
+            showNotification(result.error, 'error');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showNotification('Error recording expense', 'error');
+    }
+}

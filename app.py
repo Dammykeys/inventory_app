@@ -38,20 +38,21 @@ except Exception as e:
 
 
 def get_db_connection():
-    """Get a connection from the pool and ensure it is still alive"""
+    """Get a connection from the pool"""
+    global db_pool
     if not db_pool:
         raise Exception("Database connection pool is not initialized. Check your DATABASE_URL.")
     
-    conn = db_pool.getconn()
     try:
-        # Check if connection is still alive
-        with conn.cursor() as cur:
-            cur.execute('SELECT 1')
-        return conn
-    except (psycopg2.OperationalError, psycopg2.InterfaceError):
-        # Connection is dead, discard it and get a fresh one
-        db_pool.putconn(conn, close=True)
         return db_pool.getconn()
+    except Exception as e:
+        print(f"Error getting connection from pool: {e}")
+        # Try to re-initialize if pool is dead
+        try:
+            db_pool = pool.ThreadedConnectionPool(1, 20, app.config['DATABASE_URL'])
+            return db_pool.getconn()
+        except:
+            raise e
 
 def release_db_connection(conn):
     """Return a connection to the pool"""
@@ -426,6 +427,24 @@ def get_inventory():
     except Exception as e:
         import traceback
         print(f"Inventory Error: {e}")
+        print(traceback.format_exc())
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        release_db_connection(conn)
+
+
+@app.route('/api/low-stock')
+@login_required
+def get_low_stock():
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT * FROM products WHERE quantity <= reorder_level ORDER BY quantity ASC")
+        products = cursor.fetchall()
+        return jsonify({'success': True, 'products': products})
+    except Exception as e:
+        import traceback
+        print(f"Low Stock Error: {e}")
         print(traceback.format_exc())
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
