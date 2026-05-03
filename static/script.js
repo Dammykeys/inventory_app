@@ -194,6 +194,33 @@ document.addEventListener('DOMContentLoaded', () => {
         if (entryForm) {
             entryForm.addEventListener('submit', handleEntrySubmit);
             console.log('entryForm listener attached');
+
+            // Auto-fill existing item details when name is selected
+            const itemNameInput = document.getElementById('itemName');
+            if (itemNameInput) {
+                itemNameInput.addEventListener('change', async () => {
+                    const itemName = itemNameInput.value.trim();
+                    if (!itemName) return;
+
+                    try {
+                        const inventory = await getFromIndexedDB('inventory');
+                        const item = inventory.find(i => i.name.toLowerCase() === itemName.toLowerCase());
+                        if (item) {
+                            const brandEl = document.getElementById('itemBrand');
+                            const costEl = document.getElementById('costPrice');
+                            const sellingEl = document.getElementById('sellingPrice');
+
+                            if (brandEl) brandEl.value = item.brand || '';
+                            if (costEl) costEl.value = item.cost_price || 0;
+                            if (sellingEl) sellingEl.value = item.selling_price || 0;
+                            
+
+                        }
+                    } catch (err) {
+                        console.error('Error auto-filling entry form:', err);
+                    }
+                });
+            }
         }
     } catch (err) {
         console.error('Error during Entry Form initialization:', err);
@@ -244,10 +271,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const customerForm = document.getElementById('customerForm');
         if (customerForm) customerForm.addEventListener('submit', handleCustomerSubmit);
 
-        console.log('Other forms listeners attached');
-    } catch (err) {
-        console.error('Error during Other Forms initialization:', err);
-    }
+        // Close modals when clicking on the background overlay
+    window.addEventListener('click', (e) => {
+        if (e.target.classList.contains('modal')) {
+            e.target.classList.remove('show');
+        }
+    });
+
+    console.log('Other forms listeners attached');
+} catch (err) {
+    console.error('Error during Other Forms initialization:', err);
+}
 });
 
 function renderSearchResults(sales) {
@@ -412,6 +446,8 @@ async function loadLowStockItems() {
                         <td><strong>${item.name}</strong></td>
                         <td>${item.brand || '-'}</td>
                         <td><span class="status-badge danger">${item.quantity}</span></td>
+                        <td>₦${(item.cost_price || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        <td>₦${(item.selling_price || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                         <td>${item.reorder_level}</td>
                         <td><span style="color: var(--danger); font-weight: 600;">${deficit}</span></td>
                         <td>
@@ -466,6 +502,24 @@ function updateDateTime() {
 }
 updateDateTime();
 setInterval(updateDateTime, 60000);
+
+function setButtonLoading(button, isLoading) {
+    if (!button) return;
+    if (isLoading) {
+        button.disabled = true;
+        button.dataset.originalContent = button.innerHTML;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+        button.style.opacity = '0.7';
+        button.style.cursor = 'not-allowed';
+    } else {
+        button.disabled = false;
+        if (button.dataset.originalContent) {
+            button.innerHTML = button.dataset.originalContent;
+        }
+        button.style.opacity = '1';
+        button.style.cursor = 'pointer';
+    }
+}
 
 // Notification System (Now using Beautiful Modals)
 function showNotification(message, type = 'success') {
@@ -963,6 +1017,8 @@ function renderInventory(products) {
                 <td>${item.name}</td>
                 <td>${item.brand || '-'}</td>
                 <td>${item.quantity}</td>
+                <td>₦${(item.cost_price || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                <td>₦${(item.selling_price || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                 <td>${item.reorder_level}</td>
                 <td>
                     <span class="status-badge ${isLow ? 'danger' : 'healthy'}">
@@ -1032,9 +1088,13 @@ async function handleEntrySubmit(e) {
         return;
     }
 
+    const costPriceEl = document.getElementById('costPrice');
+    const sellingPriceEl = document.getElementById('sellingPrice');
     const name = nameEl.value.trim();
     const brand = brandEl ? brandEl.value.trim() : '';
     const quantity = parseInt(quantityEl.value);
+    const cost_price = costPriceEl ? parseFloat(costPriceEl.value) || 0 : 0;
+    const selling_price = sellingPriceEl ? parseFloat(sellingPriceEl.value) || 0 : 0;
     const type = typeEl.value;
 
     if (!name || quantity <= 0) {
@@ -1042,11 +1102,14 @@ async function handleEntrySubmit(e) {
         return;
     }
 
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    setButtonLoading(submitBtn, true);
+
     try {
         const response = await fetch('/api/add-entry', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, brand, quantity, type })
+            body: JSON.stringify({ name, brand, quantity, cost_price, selling_price, type })
         });
 
         const result = await response.json();
@@ -1064,7 +1127,7 @@ async function handleEntrySubmit(e) {
         console.error('Error:', error);
         // Queue the operation for sync
         if (!navigator.onLine) {
-            await addToSyncQueue('POST', '/api/add-entry', { name, brand, quantity, type });
+            await addToSyncQueue('POST', '/api/add-entry', { name, brand, quantity, cost_price, selling_price, type });
             showNotification('Entry saved offline - will sync when online', 'info');
             document.getElementById('entryForm').reset();
             if (brandEl) brandEl.value = '';
@@ -1072,6 +1135,8 @@ async function handleEntrySubmit(e) {
         } else {
             showNotification('Error recording entry', 'error');
         }
+    } finally {
+        setButtonLoading(submitBtn, false);
     }
 }
 
@@ -1879,7 +1944,7 @@ function addNewSaleRow() {
         <div class="form-row">
             <div class="form-group">
                 <label>Item Name <span class="required">*</span></label>
-                <input type="text" class="item-name" placeholder="Item name" list="itemSuggestions" required>
+                <input type="text" class="item-name" placeholder="Item name" list="saleItemSuggestions" required>
             </div>
             <div class="form-group">
                 <label>Quantity <span class="required">*</span></label>
@@ -1913,6 +1978,7 @@ function removeItem(button) {
 }
 
 function attachItemListeners(row) {
+    const nameInput = row.querySelector('.item-name');
     const qtyInput = row.querySelector('.item-qty');
     const priceInput = row.querySelector('.item-price');
     const totalInput = row.querySelector('.item-total');
@@ -1924,6 +1990,23 @@ function attachItemListeners(row) {
         totalInput.value = total.toFixed(2);
         updateSaleSummary();
     };
+
+    // Auto-fill price from inventory
+    nameInput.addEventListener('change', async () => {
+        const itemName = nameInput.value.trim();
+        if (!itemName) return;
+
+        try {
+            const inventory = await getFromIndexedDB('inventory');
+            const item = inventory.find(i => i.name.toLowerCase() === itemName.toLowerCase());
+            if (item && item.selling_price) {
+                priceInput.value = item.selling_price;
+                updateTotal();
+            }
+        } catch (err) {
+            console.error('Error fetching price from cache:', err);
+        }
+    });
 
     qtyInput.addEventListener('change', updateTotal);
     qtyInput.addEventListener('input', updateTotal);
@@ -2007,6 +2090,9 @@ async function handleSaleSubmit(e) {
         return;
     }
 
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    setButtonLoading(submitBtn, true);
+
     try {
         const response = await fetch('/api/create-sale', {
             method: 'POST',
@@ -2050,10 +2136,7 @@ async function handleSaleSubmit(e) {
                 </div>
             `;
 
-            document.querySelectorAll('.sale-item-row').forEach(row => {
-                attachItemListeners(row);
-            });
-
+            attachItemListeners(document.querySelector('.sale-item-row'));
             updateSaleSummary();
             loadSalesHistory();
             loadInventory();

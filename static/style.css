@@ -1037,13 +1037,19 @@ tbody tr:hover {
 
 .sale-item-row .form-row {
     display: grid;
-    grid-template-columns: 2fr 1fr 1fr 1.5fr auto;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 0.7fr) minmax(0, 1fr) minmax(0, 1fr) auto;
     gap: 10px;
-    align-items: flex-end;
+    align-items: end;
 }
 
 .sale-item-row .form-group {
     margin-bottom: 0;
+    min-width: 0;
+}
+
+.sale-item-row input {
+    width: 100%;
+    min-width: 0;
 }
 
 .sale-item-row .btn-group {
@@ -1116,6 +1122,13 @@ tbody tr:hover {
 .payment-status-badge.partial {
     background-color: #fecaca;
     color: #7f1d1d;
+}
+
+/* Medium Screens - Stack POS columns earlier to prevent overflow */
+@media (max-width: 1100px) {
+    .sales-container, .expenses-container {
+        grid-template-columns: 1fr;
+    }
 }
 
 /* --- EXPENSES PAGE --- */

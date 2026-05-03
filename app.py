@@ -78,8 +78,22 @@ def init_db():
                            name TEXT UNIQUE, 
                            quantity INTEGER, 
                            reorder_level INTEGER, 
-                           price DOUBLE PRECISION DEFAULT 0, 
+                           cost_price DOUBLE PRECISION DEFAULT 0, 
+                           selling_price DOUBLE PRECISION DEFAULT 0, 
                            brand TEXT)''')
+        
+        # Ensure new columns exist for existing tables
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='products' AND column_name='cost_price'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE products ADD COLUMN cost_price DOUBLE PRECISION DEFAULT 0")
+        
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='products' AND column_name='selling_price'")
+        if not cursor.fetchone():
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='products' AND column_name='price'")
+            if cursor.fetchone():
+                cursor.execute("ALTER TABLE products RENAME COLUMN price TO selling_price")
+            else:
+                cursor.execute("ALTER TABLE products ADD COLUMN selling_price DOUBLE PRECISION DEFAULT 0")
         
         cursor.execute('''CREATE TABLE IF NOT EXISTS transactions 
                           (id SERIAL PRIMARY KEY, 
@@ -467,6 +481,8 @@ def add_entry():
     name = data.get('name', '').strip()
     qty = data.get('quantity')
     brand = data.get('brand', '').strip()
+    cost_price = data.get('cost_price', 0)
+    selling_price = data.get('selling_price', 0)
     entry_type = data.get('type', 'Intake')
     
     if not name or not isinstance(qty, int) or qty <= 0:
@@ -487,16 +503,20 @@ def add_entry():
             new_qty = row['quantity'] + qty if entry_type == "Intake" else row['quantity'] - qty
             if new_qty < 0:
                 return jsonify({'success': False, 'error': 'Insufficient stock'}), 400
-            cursor.execute("UPDATE products SET quantity=%s WHERE name=%s", (new_qty, name))
+            
+            # Update quantity, prices, and brand if it's an Intake
+            if entry_type == "Intake":
+                cursor.execute("UPDATE products SET quantity=%s, cost_price=%s, selling_price=%s, brand=%s WHERE name=%s", 
+                              (new_qty, cost_price, selling_price, brand, name))
+            else:
+                cursor.execute("UPDATE products SET quantity=%s WHERE name=%s", (new_qty, name))
         else:
             if entry_type == "Supply":
                 return jsonify({'success': False, 'error': 'Item does not exist in stock'}), 400
-            # Try to insert with brand, fallback without if column doesn't exist
-            try:
-                cursor.execute("INSERT INTO products (name, quantity, reorder_level, brand) VALUES (%s, %s, %s, %s)", (name, qty, 5, brand))
-            except psycopg2.Error:
-                # If brand column doesn't exist, insert without it
-                cursor.execute("INSERT INTO products (name, quantity, reorder_level) VALUES (%s, %s, %s)", (name, qty, 5))
+            
+            # For new items, set initial quantity, reorder level, and prices
+            cursor.execute("INSERT INTO products (name, quantity, reorder_level, brand, cost_price, selling_price) VALUES (%s, %s, %s, %s, %s, %s)", 
+                          (name, qty, 5, brand, cost_price, selling_price))
         
         cursor.execute("INSERT INTO transactions (item_name, quantity, type, date, time) VALUES (%s,%s,%s,%s,%s)",
                       (name, qty, entry_type, date_str, time_str))
