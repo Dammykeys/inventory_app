@@ -1,3 +1,128 @@
+/**
+ * Custom Autocomplete Component
+ * Replaces native datalists for better reliability and UX
+ */
+class Autocomplete {
+    constructor(input, dataCallback) {
+        this.input = input;
+        this.dataCallback = dataCallback;
+        this.wrapper = document.createElement('div');
+        this.wrapper.className = 'autocomplete-wrapper';
+        this.list = document.createElement('div');
+        this.list.className = 'autocomplete-list';
+        
+        // Setup DOM
+        if (this.input.parentNode) {
+            this.input.parentNode.insertBefore(this.wrapper, this.input);
+            this.wrapper.appendChild(this.input);
+            this.wrapper.appendChild(this.list);
+        }
+        
+        // Events
+        this.input.addEventListener('input', () => this.onInput());
+        this.input.addEventListener('focus', () => this.onInput());
+        this.input.addEventListener('keydown', (e) => this.onKeyDown(e));
+        
+        document.addEventListener('click', (e) => {
+            if (!this.wrapper.contains(e.target)) {
+                this.close();
+            }
+        });
+        
+        this.activeIndex = -1;
+    }
+
+    async onInput() {
+        const val = this.input.value.toLowerCase();
+        const data = await this.dataCallback();
+        
+        this.list.innerHTML = '';
+        this.activeIndex = -1;
+
+        if (!val) {
+            this.close();
+            return;
+        }
+
+        const matches = data.filter(item => item.toLowerCase().includes(val)).slice(0, 10);
+        
+        if (matches.length === 0) {
+            this.close();
+            return;
+        }
+
+        matches.forEach((match, index) => {
+            const item = document.createElement('div');
+            item.className = 'autocomplete-item';
+            
+            // Highlight matching part
+            const start = match.toLowerCase().indexOf(val);
+            if (start !== -1) {
+                const before = match.substring(0, start);
+                const middle = match.substring(start, start + val.length);
+                const after = match.substring(start + val.length);
+                item.innerHTML = `${before}<strong>${middle}</strong>${after}`;
+            } else {
+                item.textContent = match;
+            }
+
+            item.addEventListener('click', () => {
+                this.select(match);
+            });
+            
+            this.list.appendChild(item);
+        });
+
+        this.list.classList.add('show');
+    }
+
+    onKeyDown(e) {
+        const items = this.list.querySelectorAll('.autocomplete-item');
+        if (!this.list.classList.contains('show')) return;
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            this.activeIndex = (this.activeIndex + 1) % items.length;
+            this.updateActive(items);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            this.activeIndex = (this.activeIndex - 1 + items.length) % items.length;
+            this.updateActive(items);
+        } else if (e.key === 'Enter') {
+            if (this.activeIndex > -1) {
+                e.preventDefault();
+                this.select(items[this.activeIndex].textContent);
+            }
+        } else if (e.key === 'Escape') {
+            this.close();
+        }
+    }
+
+    updateActive(items) {
+        items.forEach((item, index) => {
+            if (index === this.activeIndex) {
+                item.classList.add('active');
+                item.scrollIntoView({ block: 'nearest' });
+            } else {
+                item.classList.remove('active');
+            }
+        });
+    }
+
+    select(value) {
+        this.input.value = value;
+        this.close();
+        // Trigger events for logic dependent on this field
+        this.input.dispatchEvent(new Event('change', { bubbles: true }));
+        this.input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    close() {
+        this.list.classList.remove('show');
+        this.activeIndex = -1;
+    }
+}
+
 // Enhanced Mobile Responsiveness
 document.addEventListener('DOMContentLoaded', () => {
     const mobileToggle = document.getElementById('mobileToggle');
@@ -300,6 +425,18 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     console.log('Other forms listeners attached');
+
+    // Fetch initial data for autocompletes
+    fetch('/api/inventory').then(r => r.json()).then(products => {
+        if (Array.isArray(products)) {
+            window.inventoryItemNames = products.map(p => p.name);
+            // Re-initialize static autocompletes now that data is loaded
+            const itemNameInput = document.getElementById('itemName');
+            const reorderItemInput = document.getElementById('reorderItem');
+            if (itemNameInput) new Autocomplete(itemNameInput, async () => window.inventoryItemNames || []);
+            if (reorderItemInput) new Autocomplete(reorderItemInput, async () => window.inventoryItemNames || []);
+        }
+    });
 } catch (err) {
     console.error('Error during Other Forms initialization:', err);
 }
@@ -420,16 +557,18 @@ function showPage(pageName) {
 
     if (pageName === 'dashboard') loadDashboard();
     if (pageName === 'inventory') loadInventory();
-    if (pageName === 'transactions') loadTransactions();
+    if (pageName === 'stock_log') loadTransactions();
+    if (pageName === 'sales_history') loadSalesHistory();
     if (pageName === 'sales') {
         loadSalesHistory();
         loadSalesRecords();
         // Pre-load customer suggestions for POS autocomplete
         fetch('/api/customers').then(r => r.json()).then(customers => {
             if (Array.isArray(customers)) {
-                const datalist = document.getElementById('customerSuggestions');
-                if (datalist) {
-                    datalist.innerHTML = customers.map(c => `<option value="${c.name}">`).join('');
+                window.customerNames = customers.map(c => c.name);
+                const customerInput = document.getElementById('saleCustomer');
+                if (customerInput) {
+                    new Autocomplete(customerInput, async () => window.customerNames || []);
                 }
             }
         }).catch(() => {});
@@ -1093,20 +1232,17 @@ function setupInventorySearch() {
 
 // Update item suggestions for forms
 function updateItemSuggestions(products) {
-    const itemNames = products.map(p => p.name);
-
-    // Update reorder item suggestions
-    const reorderSuggestions = document.getElementById('itemSuggestions');
-    if (reorderSuggestions) {
-        reorderSuggestions.innerHTML = itemNames.map(name => `<option value="${name}">`).join('');
-    }
-
-    // Update sale item suggestions
-    const saleSuggestions = document.getElementById('saleItemSuggestions');
-    if (saleSuggestions) {
-        saleSuggestions.innerHTML = itemNames.map(name => `<option value="${name}">`).join('');
-    }
+    window.inventoryItemNames = products.map(p => p.name);
 }
+
+// Initialize autocomplete for static fields
+document.addEventListener('DOMContentLoaded', () => {
+    const itemNameInput = document.getElementById('itemName');
+    const reorderItemInput = document.getElementById('reorderItem');
+    
+    if (itemNameInput) new Autocomplete(itemNameInput, async () => window.inventoryItemNames || []);
+    if (reorderItemInput) new Autocomplete(reorderItemInput, async () => window.inventoryItemNames || []);
+});
 
 // --- NEW ENTRY FORM ---
 async function handleEntrySubmit(e) {
@@ -2092,6 +2228,9 @@ function attachItemListeners(row) {
         const price = parseFloat(priceStr) || 0;
         priceInput.value = formatCurrency(price);
     });
+
+    // Initialize autocomplete for this row
+    new Autocomplete(nameInput, async () => window.inventoryItemNames || []);
 }
 
 function updateSaleSummary() {
@@ -2289,7 +2428,9 @@ async function loadSalesHistory() {
         await saveToIndexedDB('sales', sales);
 
         const table = document.getElementById('salesTable');
-        table.innerHTML = sales.map((sale, index) => {
+        const recentTable = document.getElementById('recentSalesTable');
+
+        const rowsHTML = sales.map((sale, index) => {
             const statusColor = sale.payment_status.toLowerCase();
             return `
                 <tr>
@@ -2314,8 +2455,26 @@ async function loadSalesHistory() {
             `;
         }).join('');
 
-        if (sales.length === 0) {
-            table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No sales recorded</td></tr>';
+        if (table) {
+            table.innerHTML = rowsHTML || '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No sales recorded</td></tr>';
+        }
+
+        if (recentTable) {
+            // Show last 8 sales in condensed view
+            const recentSales = sales.slice(0, 8);
+            recentTable.innerHTML = recentSales.map(sale => {
+                const statusColor = sale.payment_status.toLowerCase();
+                return `
+                    <tr>
+                        <td><strong>${sale.sale_num}</strong></td>
+                        <td>${sale.customer}</td>
+                        <td>${sale.date}</td>
+                        <td>₦${formatCurrency(sale.total_amount)}</td>
+                        <td><span class="payment-status-badge ${statusColor}">${sale.payment_status}</span></td>
+                        <td><button class="action-btn edit" onclick="viewSaleDetails('${sale.sale_num}')">View</button></td>
+                    </tr>
+                `;
+            }).join('') || '<tr><td colspan="6" style="text-align:center;">No recent sales</td></tr>';
         }
     } catch (error) {
         console.error('Error loading sales:', error);
@@ -2844,3 +3003,5 @@ async function confirmDeleteCustomer(id, name) {
         }
     }
 }
+
+

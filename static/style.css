@@ -696,6 +696,8 @@ tbody tr:hover {
 .form-group input,
 .form-group select,
 .form-group textarea {
+    width: 100%;
+    box-sizing: border-box;
     padding: 10px 12px;
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -1048,7 +1050,7 @@ tbody tr:hover {
     display: grid;
     grid-template-columns: minmax(0, 2fr) minmax(0, 0.7fr) minmax(0, 1fr) minmax(0, 1fr) auto;
     gap: 10px;
-    align-items: end;
+    align-items: start;
 }
 
 .sale-item-row .form-group {
@@ -1397,3 +1399,45 @@ tbody tr:hover {
         display: none;
     }
 }
+/* Autocomplete Styles */
+.autocomplete-wrapper {
+    position: relative;
+    width: 100%;
+    display: block;
+}
+.autocomplete-wrapper input {
+    width: 100%;
+}
+.autocomplete-list {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 9999;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    max-height: 200px;
+    overflow-y: auto;
+    box-shadow: var(--shadow-md);
+    margin-top: 4px;
+    display: none;
+}
+.autocomplete-list.show {
+    display: block;
+}
+.autocomplete-item {
+    padding: 10px 15px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-light);
+    color: var(--text-main);
+    font-size: 0.9rem;
+}
+.autocomplete-item:last-child {
+    border-bottom: none;
+}
+.autocomplete-item:hover, .autocomplete-item.active {
+    background-color: var(--primary-light);
+    color: var(--primary-dark);
+}
+

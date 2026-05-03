@@ -30,9 +30,13 @@
                     <i class="fas fa-plus-circle"></i>
                     <span>New Entry</span>
                 </a>
-                <a href="#" class="nav-item" data-page="transactions">
+                <a href="#" class="nav-item" data-page="stock_log">
+                    <i class="fas fa-exchange-alt"></i>
+                    <span>Stock Log</span>
+                </a>
+                <a href="#" class="nav-item" data-page="sales_history">
                     <i class="fas fa-history"></i>
-                    <span>Transactions</span>
+                    <span>Sales History</span>
                 </a>
                 <a href="#" class="nav-item" data-page="invoice">
                     <i class="fas fa-receipt"></i>
@@ -350,9 +354,7 @@
                         <form id="entryForm">
                             <div class="form-group">
                                 <label for="itemName">Item Name <span class="required">*</span></label>
-                                <input type="text" id="itemName" placeholder="Enter item name" list="itemSuggestions"
-                                    required>
-                                <datalist id="itemSuggestions"></datalist>
+                                <input type="text" id="itemName" placeholder="Enter item name" required>
                             </div>
                             <div class="form-group">
                                 <label for="itemBrand">Brand</label>
@@ -390,9 +392,7 @@
                         <form id="reorderForm">
                             <div class="form-group">
                                 <label for="reorderItem">Select Item <span class="required">*</span></label>
-                                <input type="text" id="reorderItem" placeholder="Enter item name" list="itemSuggestions"
-                                    required>
-                                <datalist id="itemSuggestions"></datalist>
+                                <input type="text" id="reorderItem" placeholder="Enter item name" required>
                             </div>
                             <div class="form-group">
                                 <label for="reorderLevel">Reorder Level <span class="required">*</span></label>
@@ -408,9 +408,10 @@
             </section>
 
             <!-- Transactions Page -->
-            <section id="transactions" class="page">
+            <!-- Stock Log Page -->
+            <section id="stock_log" class="page">
                 <div class="page-header">
-                    <h2>Transaction Log</h2>
+                    <h2>Stock Activity Log</h2>
                 </div>
                 <div class="card">
                     <div class="filter-group">
@@ -487,16 +488,15 @@
                         <form id="saleForm">
                             <div class="form-group">
                                 <label for="saleCustomer">Customer Name <span class="required">*</span></label>
-                                <input type="text" id="saleCustomer" placeholder="Enter customer name"
-                                    list="customerSuggestions" required>
+                                <input type="text" id="saleCustomer" placeholder="Enter customer name" required>
                             </div>
 
                             <div class="form-group">
                                 <label for="paymentStatus">Payment Status</label>
                                 <select id="paymentStatus">
+                                    <option value="Credit">Credit</option>
                                     <option value="Paid">Paid</option>
                                     <option value="Pending">Pending</option>
-                                    <option value="Credit">Credit</option>
                                     <option value="Partial">Partial</option>
                                 </select>
                             </div>
@@ -535,8 +535,6 @@
                                     </div>
                                 </div>
                             </div>
-                            <datalist id="saleItemSuggestions"></datalist>
-                            <datalist id="customerSuggestions"></datalist>
 
                             <button type="button" class="btn btn-secondary" id="addItemBtn">
                                 <i class="fas fa-plus"></i> Add Item
@@ -568,13 +566,45 @@
                         </form>
                     </div>
 
-                    <!-- Sales History -->
+                    <!-- Recent Sales (Condensed) -->
                     <div class="card">
-                        <h3>Transaction History</h3>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                            <h3 style="margin: 0;">Recent Sales</h3>
+                            <button class="btn btn-secondary btn-small" onclick="showPage('sales_history')">
+                                View All History <i class="fas fa-arrow-right"></i>
+                            </button>
+                        </div>
+                        <div class="table-responsive">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Sale No</th>
+                                        <th>Customer</th>
+                                        <th>Date</th>
+                                        <th>Amount</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="recentSalesTable">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Full Sales History Page -->
+                <section id="sales_history" class="page" style="display: none;">
+                    <div class="page-header">
+                        <h2>Full Sales Documentation</h2>
+                        <button class="btn btn-primary" onclick="showPage('sales')">
+                            <i class="fas fa-cart-plus"></i> New Sale
+                        </button>
+                    </div>
+                    <div class="card">
                         <div class="filter-group">
                             <input type="date" id="salesHistoryDate" class="filter-input">
-                            <input type="text" id="searchCustomer" placeholder="Search by customer..."
-                                class="filter-input">
+                            <input type="text" id="searchCustomer" placeholder="Search by customer..." class="filter-input">
                             <button id="searchSalesBtn" class="btn btn-secondary">
                                 <i class="fas fa-search"></i> Search
                             </button>
@@ -589,7 +619,6 @@
                                         <th>Date</th>
                                         <th>Total Amount</th>
                                         <th>Payment Status</th>
-                                        <th>Staff</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
@@ -597,8 +626,7 @@
                                 </tbody>
                             </table>
                         </div>
-                    </div>
-                </div>
+                    </section>
 
                 <!-- POS Records -->
                 <div class="card" style="margin-top: 20px;">
