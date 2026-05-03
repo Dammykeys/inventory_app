@@ -231,6 +231,7 @@ body {
     font-weight: 600;
     color: var(--text-main);
     margin: 0;
+    white-space: nowrap;
 }
 
 .mobile-toggle {
@@ -1208,6 +1209,15 @@ tbody tr:hover {
 
     .header {
         left: 0;
+        padding: 0 1rem;
+    }
+
+    .header-left {
+        gap: 0.5rem;
+    }
+
+    .header-right {
+        gap: 0.75rem;
     }
 
 
@@ -1372,6 +1382,10 @@ tbody tr:hover {
 
     .page-header h2 {
         font-size: 1.5rem;
+    }
+
+    .header h1 {
+        font-size: 0.9rem;
     }
 
     .header-right .date-time {
