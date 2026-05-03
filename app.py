@@ -598,7 +598,6 @@ def get_transactions():
     finally:
         release_db_connection(conn)
 
-
 @app.route('/api/generate-invoice', methods=['POST'])
 @login_required
 def generate_invoice():
@@ -1031,13 +1030,13 @@ def generate_sale_invoice(sale_num):
             pdf.cell(15, 8, str(i), border=1)
             pdf.cell(65, 8, item['item_name'][:20], border=1)
             pdf.cell(20, 8, str(item['quantity']), border=1)
-            pdf.cell(40, 8, f"{item['price']:.2f}", border=1)
-            pdf.cell(40, 8, f"{item['total']:.2f}", border=1, ln=True)
+            pdf.cell(40, 8, f"{float(item['price']):,.2f}", border=1)
+            pdf.cell(40, 8, f"{float(item['total']):,.2f}", border=1, ln=True)
         
         # Total
         pdf.set_font("Arial", 'B', 11)
         pdf.cell(140, 10, "Total Amount:", border=0, align='R')
-        pdf.cell(40, 10, f"{sale['total_amount']:.2f}", border=1, ln=True)
+        pdf.cell(40, 10, f"{float(sale['total_amount']):,.2f}", border=1, ln=True)
         
         pdf.set_font("Arial", size=9)
         pdf.ln(5)

@@ -914,6 +914,7 @@ tbody tr:hover {
 
 .modal-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 1rem;
     justify-content: center;
 }
@@ -1378,6 +1379,10 @@ tbody tr:hover {
 @media (max-width: 480px) {
     .stats-grid, .sales-stats-grid {
         grid-template-columns: 1fr;
+    }
+
+    .modal-content {
+        padding: 1.5rem;
     }
 
     .page-header h2 {

@@ -317,7 +317,7 @@ function renderSearchResults(sales) {
                 <td><strong>${sale.sale_num}</strong></td>
                 <td>${sale.customer}</td>
                 <td>${sale.date}</td>
-                <td>₦${parseFloat(sale.total_amount).toFixed(2)}</td>
+                <td>₦${formatCurrency(sale.total_amount)}</td>
                 <td>
                     <span class="payment-status-badge ${statusColor}">
                         ${sale.payment_status}
@@ -468,8 +468,8 @@ async function loadLowStockItems() {
                         <td><strong>${item.name}</strong></td>
                         <td>${item.brand || '-'}</td>
                         <td><span class="status-badge danger">${item.quantity}</span></td>
-                        <td>₦${(item.cost_price || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                        <td>₦${(item.selling_price || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        <td>₦${formatCurrency(item.cost_price || 0)}</td>
+                        <td>₦${formatCurrency(item.selling_price || 0)}</td>
                         <td>${item.reorder_level}</td>
                         <td><span style="color: var(--danger); font-weight: 600;">${deficit}</span></td>
                         <td>
@@ -543,6 +543,19 @@ function setButtonLoading(button, isLoading) {
     }
 }
 
+
+/**
+ * Formats a number with comma separators and 2 decimal places.
+ * Example: 1250000 -> 1,250,000.00
+ */
+function formatCurrency(amount) {
+    if (amount === undefined || amount === null || isNaN(amount)) return '0.00';
+    return parseFloat(amount).toLocaleString('en-NG', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+}
+
 // Notification System (Now using Beautiful Modals)
 function showNotification(message, type = 'success') {
     // Determine title based on type
@@ -552,10 +565,8 @@ function showNotification(message, type = 'success') {
     if (type === 'warning') title = 'Warning';
     if (type === 'info') title = 'System Info';
 
-    // Show the modal
-    showAlertModal(message, type, title);
+    // Fallback toast for feedback without modal interruption
 
-    // Fallback toast for secondary feedback (optional, but let's stick to modals as requested)
     const notification = document.getElementById('notification');
     if (notification) {
         notification.textContent = message;
@@ -906,23 +917,23 @@ function renderDashboard(inventoryStats, lowStockProducts, transactions, salesSu
 
     // Sales stats
     document.getElementById('todaysSales').textContent = salesSummary.total_sales || 0;
-    document.getElementById('totalRevenue').textContent = `₦${(metrics.total_revenue || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    document.getElementById('totalExpenses').textContent = `₦${(metrics.total_expenses || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    document.getElementById('totalRevenue').textContent = `₦${formatCurrency(metrics.total_revenue || 0)}`;
+    document.getElementById('totalExpenses').textContent = `₦${formatCurrency(metrics.total_expenses || 0)}`;
 
     // Total credit
     const totalCredit = salesSummary.credit_amount || 0;
-    document.getElementById('totalCredit').textContent = `₦${totalCredit.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    document.getElementById('totalCredit').textContent = `₦${formatCurrency(totalCredit)}`;
 
     // Total pending
     const totalPending = salesSummary.pending_amount || 0;
-    document.getElementById('totalPending').textContent = `₦${totalPending.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    document.getElementById('totalPending').textContent = `₦${formatCurrency(totalPending)}`;
 
     // Realized payment (paid amount - expenses)
     const paidAmount = salesSummary.paid_amount || 0;
     const totalExpenses = metrics.total_expenses || 0;
     const realizedPayment = paidAmount - totalExpenses;
     const realizedPaymentElement = document.getElementById('realizedPayment');
-    realizedPaymentElement.textContent = `₦${realizedPayment.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    realizedPaymentElement.textContent = `₦${formatCurrency(realizedPayment)}`;
     if (realizedPayment < 0) {
         realizedPaymentElement.style.color = 'var(--danger-color)';
     } else {
@@ -977,7 +988,7 @@ function renderDashboard(inventoryStats, lowStockProducts, transactions, salesSu
                 <td><strong>${sale.sale_num}</strong></td>
                 <td>${sale.customer}</td>
                 <td>${sale.date}</td>
-                <td>₦${parseFloat(sale.total_amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                <td>₦${formatCurrency(sale.total_amount)}</td>
                 <td><span class="payment-status-badge ${statusColor}">${sale.payment_status}</span></td>
                 <td>${sale.performed_by || '-'}</td>
             </tr>
@@ -1041,8 +1052,8 @@ function renderInventory(products) {
                 <td>${item.name}</td>
                 <td>${item.brand || '-'}</td>
                 <td>${item.quantity}</td>
-                <td>₦${(item.cost_price || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                <td>₦${(item.selling_price || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                <td>₦${formatCurrency(item.cost_price || 0)}</td>
+                <td>₦${formatCurrency(item.selling_price || 0)}</td>
                 <td>${item.reorder_level}</td>
                 <td>
                     <span class="status-badge ${isLow ? 'danger' : 'healthy'}">
@@ -1771,7 +1782,7 @@ async function loadExpenses() {
                 <td>${expense.date}</td>
                 <td>${expense.description}</td>
                 <td><span class="status-badge healthy">${expense.category}</span></td>
-                <td><strong>₦${parseFloat(expense.amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></td>
+                <td><strong>₦${formatCurrency(expense.amount)}</strong></td>
                 <td>${expense.notes || '-'}</td>
                 <td>
                     <div class="action-buttons">
@@ -1797,7 +1808,7 @@ async function loadExpenses() {
                     <td>${expense.date}</td>
                     <td>${expense.description}</td>
                     <td><span class="status-badge healthy">${expense.category}</span></td>
-                    <td><strong>₦${parseFloat(expense.amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></td>
+                    <td><strong>₦${formatCurrency(expense.amount)}</strong></td>
                     <td>${expense.notes || '-'}</td>
                     <td>
                         <div class="action-buttons">
@@ -1832,13 +1843,13 @@ async function loadExpensesSummary() {
         const response = await fetch(url);
         const data = await response.json();
 
-        document.getElementById('totalExpenses').textContent = `₦${parseFloat(data.total_expenses).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        document.getElementById('totalExpenses').textContent = `₦${formatCurrency(data.total_expenses)}`;
 
         const categoryDiv = document.getElementById('expensesByCategory');
         categoryDiv.innerHTML = data.by_category.map(cat => `
             <div class="category-item">
                 <span class="category-name">${cat.category}</span>
-                <span class="category-amount">₦${parseFloat(cat.total).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                <span class="category-amount">₦${formatCurrency(cat.total)}</span>
             </div>
         `).join('');
 
@@ -1977,11 +1988,11 @@ function addNewSaleRow() {
             </div>
             <div class="form-group">
                 <label>Price <span class="required">*</span></label>
-                <input type="number" class="item-price" min="0" step="0.01" placeholder="Price" required>
+                <input type="text" inputmode="decimal" class="item-price" placeholder="Price" required>
             </div>
             <div class="form-group">
                 <label>Total</label>
-                <input type="number" class="item-total" readonly placeholder="0.00">
+                <input type="text" class="item-total" readonly placeholder="0.00">
             </div>
             <div class="form-group btn-group">
                 <label>&nbsp;</label>
@@ -1993,6 +2004,10 @@ function addNewSaleRow() {
     `;
     container.appendChild(itemRow);
     attachItemListeners(itemRow);
+    const newNameInput = itemRow.querySelector('.item-name');
+    if (newNameInput) {
+        newNameInput.focus();
+    }
 }
 
 document.getElementById('addItemBtn')?.addEventListener('click', addNewSaleRow);
@@ -2010,33 +2025,73 @@ function attachItemListeners(row) {
 
     const updateTotal = () => {
         const qty = parseFloat(qtyInput.value) || 0;
-        const price = parseFloat(priceInput.value) || 0;
+        const priceStr = priceInput.value.replace(/,/g, '');
+        const price = parseFloat(priceStr) || 0;
         const total = qty * price;
-        totalInput.value = total.toFixed(2);
+        totalInput.value = formatCurrency(total);
+        
+        // Instant visual stock warning
+        const available = qtyInput.dataset.available ? parseInt(qtyInput.dataset.available) : null;
+        const formGroup = qtyInput.closest('.form-group');
+        let warningEl = formGroup.querySelector('.qty-warning');
+        if (!warningEl) {
+            warningEl = document.createElement('div');
+            warningEl.className = 'qty-warning';
+            warningEl.style.color = 'var(--danger)';
+            warningEl.style.fontSize = '0.75rem';
+            warningEl.style.marginTop = '0.25rem';
+            warningEl.style.display = 'none';
+            formGroup.appendChild(warningEl);
+        }
+
+        if (available !== null && qty > available) {
+            qtyInput.style.borderColor = 'var(--danger)';
+            qtyInput.style.backgroundColor = '#fff1f2';
+            warningEl.textContent = `Only ${available} left!`;
+            warningEl.style.display = 'block';
+        } else {
+            qtyInput.style.borderColor = '';
+            qtyInput.style.backgroundColor = '';
+            warningEl.style.display = 'none';
+        }
+
         updateSaleSummary();
     };
 
     // Auto-fill price from inventory
-    nameInput.addEventListener('change', async () => {
+    const handleNameSelect = async () => {
         const itemName = nameInput.value.trim();
-        if (!itemName) return;
+        if (!itemName) {
+            qtyInput.dataset.available = "";
+            return;
+        }
 
         try {
             const inventory = await getFromIndexedDB('inventory');
             const item = inventory.find(i => i.name.toLowerCase() === itemName.toLowerCase());
-            if (item && item.selling_price) {
-                priceInput.value = item.selling_price;
+            if (item) {
+                qtyInput.dataset.available = item.quantity;
+                priceInput.value = formatCurrency(item.selling_price || 0);
                 updateTotal();
             }
         } catch (err) {
-            console.error('Error fetching price from cache:', err);
+            console.error('Error fetching inventory item for validation:', err);
         }
-    });
+    };
+    
+    nameInput.addEventListener('change', handleNameSelect);
+    nameInput.addEventListener('input', handleNameSelect);
 
     qtyInput.addEventListener('change', updateTotal);
     qtyInput.addEventListener('input', updateTotal);
     priceInput.addEventListener('change', updateTotal);
     priceInput.addEventListener('input', updateTotal);
+    priceInput.addEventListener('blur', () => {
+        if (!priceInput.value) return;
+        const priceStr = priceInput.value.replace(/,/g, '');
+        const price = parseFloat(priceStr) || 0;
+        priceInput.value = formatCurrency(price);
+    });
 }
 
 function updateSaleSummary() {
@@ -2047,7 +2102,8 @@ function updateSaleSummary() {
 
     rows.forEach(row => {
         const qty = parseFloat(row.querySelector('.item-qty').value) || 0;
-        const total = parseFloat(row.querySelector('.item-total').value) || 0;
+        const totalStr = row.querySelector('.item-total').value.replace(/,/g, '');
+        const total = parseFloat(totalStr) || 0;
 
         if (qty > 0) totalItems++;
         totalQty += qty;
@@ -2056,7 +2112,7 @@ function updateSaleSummary() {
 
     document.getElementById('totalItems').textContent = totalItems;
     document.getElementById('totalQty').textContent = totalQty;
-    document.getElementById('saleTotal').textContent = totalAmount.toFixed(2);
+    document.getElementById('saleTotal').textContent = formatCurrency(totalAmount);
 }
 
 // Initialize item listeners
@@ -2076,12 +2132,14 @@ async function handleSaleSubmit(e) {
         return;
     }
 
-    // Get inventory to validate items
-    let inventoryItems = [];
+    // Get inventory to validate items and stock
+    let inventoryMap = {};
     try {
         const inventoryResponse = await fetch('/api/inventory');
         const inventoryData = await inventoryResponse.json();
-        inventoryItems = inventoryData.map(p => p.name.toLowerCase());
+        inventoryData.forEach(p => {
+            inventoryMap[p.name.toLowerCase()] = p.quantity;
+        });
     } catch (error) {
         console.error('Error fetching inventory:', error);
         showNotification('Error validating items', 'error');
@@ -2090,16 +2148,27 @@ async function handleSaleSubmit(e) {
 
     const items = [];
     let invalidItem = null;
+    let insufficientStockItem = null;
+    const requestedQtys = {};
 
     document.querySelectorAll('.sale-item-row').forEach(row => {
         const name = row.querySelector('.item-name').value.trim();
         const qty = parseInt(row.querySelector('.item-qty').value);
-        const price = parseFloat(row.querySelector('.item-price').value);
+        const priceStr = row.querySelector('.item-price').value.replace(/,/g, '');
+        const price = parseFloat(priceStr);
 
         if (name && qty > 0 && price >= 0) {
+            const lowerName = name.toLowerCase();
+            
+            requestedQtys[lowerName] = (requestedQtys[lowerName] || 0) + qty;
+
             // Check if item exists in inventory
-            if (!inventoryItems.includes(name.toLowerCase())) {
+            if (!(lowerName in inventoryMap)) {
                 invalidItem = name;
+            } else if (requestedQtys[lowerName] > inventoryMap[lowerName]) {
+                if (!insufficientStockItem) {
+                    insufficientStockItem = { name: name, available: inventoryMap[lowerName] };
+                }
             }
             items.push({ name, quantity: qty, price });
         }
@@ -2112,6 +2181,11 @@ async function handleSaleSubmit(e) {
 
     if (invalidItem) {
         showNotification(`Item "${invalidItem}" is not in the inventory list`, 'error');
+        return;
+    }
+
+    if (insufficientStockItem) {
+        showNotification(`Insufficient stock for "${insufficientStockItem.name}". Only ${insufficientStockItem.available} available.`, 'error');
         return;
     }
 
@@ -2145,11 +2219,11 @@ async function handleSaleSubmit(e) {
                         </div>
                         <div class="form-group">
                             <label>Price <span class="required">*</span></label>
-                            <input type="number" class="item-price" min="0" step="0.01" placeholder="Price" required>
+                            <input type="text" inputmode="decimal" class="item-price" placeholder="Price" required>
                         </div>
                         <div class="form-group">
                             <label>Total</label>
-                            <input type="number" class="item-total" readonly placeholder="0.00">
+                            <input type="text" class="item-total" readonly placeholder="0.00">
                         </div>
                         <div class="form-group btn-group">
                             <label>&nbsp;</label>
@@ -2179,6 +2253,10 @@ async function handleSaleSubmit(e) {
             updateSyncStatus('Offline', 'offline');
         } else {
             showNotification('Error creating sale', 'error');
+        }
+    } finally {
+        if (submitBtn) {
+            setButtonLoading(submitBtn, false);
         }
     }
 }
@@ -2219,7 +2297,7 @@ async function loadSalesHistory() {
                     <td><strong>${sale.sale_num}</strong></td>
                     <td>${sale.customer}</td>
                     <td>${sale.date}</td>
-                    <td>₦${parseFloat(sale.total_amount).toFixed(2)}</td>
+                    <td>₦${formatCurrency(sale.total_amount)}</td>
                     <td>
                         <span class="payment-status-badge ${statusColor}">
                             ${sale.payment_status}
@@ -2254,7 +2332,7 @@ async function loadSalesHistory() {
                         <td><strong>${sale.sale_num}</strong></td>
                         <td>${sale.customer}</td>
                         <td>${sale.date}</td>
-                        <td>₦${parseFloat(sale.total_amount).toFixed(2)}</td>
+                        <td>₦${formatCurrency(sale.total_amount)}</td>
                         <td>
                             <span class="payment-status-badge ${statusColor}">
                                 ${sale.payment_status}
@@ -2309,7 +2387,7 @@ async function loadSalesRecords() {
                     <td><strong>${sale.sale_num}</strong></td>
                     <td>${sale.customer}</td>
                     <td>${sale.date}</td>
-                    <td>₦${parseFloat(sale.total_amount).toFixed(2)}</td>
+                    <td>₦${formatCurrency(sale.total_amount)}</td>
                     <td>
                         <span class="payment-status-badge ${statusColor}">
                             ${sale.payment_status}
@@ -2352,8 +2430,8 @@ async function viewSaleDetails(saleNum) {
                 <tr>
                     <td>${item.item_name}</td>
                     <td>${item.quantity}</td>
-                    <td>₦${parseFloat(item.price).toFixed(2)}</td>
-                    <td>₦${parseFloat(item.total).toFixed(2)}</td>
+                    <td>₦${formatCurrency(item.price)}</td>
+                    <td>₦${formatCurrency(item.total)}</td>
                 </tr>
             `;
         });
@@ -2371,7 +2449,7 @@ async function viewSaleDetails(saleNum) {
             <div style="margin-top: 15px; padding: 10px; background-color: var(--light-bg); border-radius: 6px;">
                 <div style="display: flex; justify-content: space-between; font-size: 16px; font-weight: 600;">
                     <span>Total Amount:</span>
-                    <span style="color: var(--primary-color);">₦${parseFloat(sale.total_amount).toFixed(2)}</span>
+                    <span style="color: var(--primary-color);">₦${formatCurrency(sale.total_amount)}</span>
                 </div>
             </div>
         `;
@@ -2500,7 +2578,7 @@ if (searchSalesBtn) {
                         <td><strong>${sale.sale_num}</strong></td>
                         <td>${sale.customer}</td>
                         <td>${sale.date}</td>
-                        <td>₦${parseFloat(sale.total_amount).toFixed(2)}</td>
+                        <td>₦${formatCurrency(sale.total_amount)}</td>
                         <td>
                             <span class="payment-status-badge ${statusColor}">
                                 ${sale.payment_status}
@@ -2663,7 +2741,7 @@ function renderCustomers(customers) {
             <td>${c.phone || '-'}</td>
             <td>${c.email || '-'}</td>
             <td>${c.address || '-'}</td>
-            <td>₦${parseFloat(c.total_debt || 0).toFixed(2)}</td>
+            <td>₦${formatCurrency(c.total_debt || 0)}</td>
             <td>
                 <div class="action-buttons">
                     <button class="action-btn edit" onclick="editCustomer(${JSON.stringify(c).replace(/"/g, '&quot;')})">Edit</button>
