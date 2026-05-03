@@ -101,7 +101,13 @@ def init_db():
                            quantity INTEGER, 
                            type TEXT, 
                            date TEXT, 
-                           time TEXT)''')
+                           time TEXT,
+                           performed_by TEXT)''')
+        
+        # Ensure performed_by exists for existing transactions table
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='transactions' AND column_name='performed_by'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE transactions ADD COLUMN performed_by TEXT")
         
         cursor.execute('''CREATE TABLE IF NOT EXISTS sales 
                           (id SERIAL PRIMARY KEY, 
@@ -110,7 +116,13 @@ def init_db():
                            date TEXT, 
                            time TEXT, 
                            total_amount DOUBLE PRECISION, 
-                           payment_status TEXT)''')
+                           payment_status TEXT,
+                           performed_by TEXT)''')
+        
+        # Ensure performed_by exists for existing sales table
+        cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='sales' AND column_name='performed_by'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE sales ADD COLUMN performed_by TEXT")
         
         cursor.execute('''CREATE TABLE IF NOT EXISTS sale_items 
                           (id SERIAL PRIMARY KEY, 
@@ -518,9 +530,13 @@ def add_entry():
             cursor.execute("INSERT INTO products (name, quantity, reorder_level, brand, cost_price, selling_price) VALUES (%s, %s, %s, %s, %s, %s)", 
                           (name, qty, 5, brand, cost_price, selling_price))
         
-        cursor.execute("INSERT INTO transactions (item_name, quantity, type, date, time) VALUES (%s,%s,%s,%s,%s)",
-                      (name, qty, entry_type, date_str, time_str))
+        username = session.get('username', 'System')
+        cursor.execute("INSERT INTO transactions (item_name, quantity, type, date, time, performed_by) VALUES (%s,%s,%s,%s,%s,%s)",
+                      (name, qty, entry_type, date_str, time_str, username))
         conn.commit()
+        
+        # Log the inventory activity
+        log_activity(f"Inventory {entry_type}", f"Item: {name}, Qty: {qty}, Brand: {brand}")
         return jsonify({'success': True, 'message': f'{entry_type} recorded successfully!'})
     except psycopg2.Error:
         conn.rollback()
@@ -747,6 +763,7 @@ def create_sale():
         current_time = datetime.datetime.now().strftime("%H:%M:%S")
         total_amount = 0
         
+        username = session.get('username', 'System')
         # Process each item
         for item in items:
             item_name = item.get('name', '').strip()
@@ -770,17 +787,20 @@ def create_sale():
                 # Deduct from inventory
                 cursor.execute("UPDATE products SET quantity = quantity - %s WHERE name = %s", (quantity, item_name))
                 
-                # Log transaction
-                cursor.execute("INSERT INTO transactions (item_name, quantity, type, date, time) VALUES (%s,%s,'Supply',%s,%s)",
-                               (item_name, quantity, today, current_time))
+                # Log transaction with performed_by
+                cursor.execute("INSERT INTO transactions (item_name, quantity, type, date, time, performed_by) VALUES (%s,%s,'Supply',%s,%s,%s)",
+                               (item_name, quantity, today, current_time, username))
             
             # Add sale item
             cursor.execute("INSERT INTO sale_items (sale_num, item_name, quantity, price, total) VALUES (%s,%s,%s,%s,%s)",
                           (sale_num, item_name, quantity, price, item_total))
         
-        # Create sale record
-        cursor.execute("INSERT INTO sales (sale_num, customer, date, time, total_amount, payment_status) VALUES (%s,%s,%s,%s,%s,%s)",
-                      (sale_num, customer, today, current_time, total_amount, payment_status))
+        # Create sale record with performed_by
+        cursor.execute("INSERT INTO sales (sale_num, customer, date, time, total_amount, payment_status, performed_by) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                      (sale_num, customer, today, current_time, total_amount, payment_status, username))
+        
+        # Log the sale activity
+        log_activity("Create Sale", f"Sale #{sale_num}, Customer: {customer}, Amount: {total_amount}")
         
         # --- CUSTOMER MANAGEMENT SYNC ---
         # 1. Check if customer exists, if not create them

@@ -278,6 +278,27 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Ctrl + F Shortcut for searching
+    window.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+            const activePage = document.querySelector('.page.active');
+            if (activePage) {
+                const searchBox = activePage.querySelector('.search-box');
+                if (searchBox) {
+                    e.preventDefault();
+                    searchBox.focus();
+                    searchBox.select(); // Highlight content
+                    searchBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    // Smooth visual feedback via CSS class
+                    searchBox.classList.add('highlight-trigger');
+                    setTimeout(() => {
+                        searchBox.classList.remove('highlight-trigger');
+                    }, 1000);
+                }
+            }
+        }
+    });
+
     console.log('Other forms listeners attached');
 } catch (err) {
     console.error('Error during Other Forms initialization:', err);
@@ -302,6 +323,7 @@ function renderSearchResults(sales) {
                         ${sale.payment_status}
                     </span>
                 </td>
+                <td>${sale.performed_by || '-'}</td>
                 <td>
                     <div class="action-buttons">
                         <button class="action-btn edit" onclick="viewSaleDetails('${sale.sale_num}')">View</button>
@@ -936,6 +958,7 @@ function renderDashboard(inventoryStats, lowStockProducts, transactions, salesSu
             <td>${tx.quantity}</td>
             <td><span class="status-badge ${tx.type === 'Intake' ? 'success' : 'warning'}">${tx.type}</span></td>
             <td>${tx.time}</td>
+            <td>${tx.performed_by || '-'}</td>
         </tr>
     `).join('');
 
@@ -956,6 +979,7 @@ function renderDashboard(inventoryStats, lowStockProducts, transactions, salesSu
                 <td>${sale.date}</td>
                 <td>₦${parseFloat(sale.total_amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                 <td><span class="payment-status-badge ${statusColor}">${sale.payment_status}</span></td>
+                <td>${sale.performed_by || '-'}</td>
             </tr>
         `;
     }).join('');
@@ -1211,6 +1235,7 @@ async function loadTransactions() {
                 <td>${tx.item_name}</td>
                 <td>${tx.quantity}</td>
                 <td><span class="status-badge ${tx.type === 'Intake' ? 'success' : 'warning'}">${tx.type}</span></td>
+                <td>${tx.performed_by || '-'}</td>
                 <td>
                     <div class="action-buttons">
                         <button class="action-btn delete" onclick="confirmDelete(${tx.id}, 'transaction', '${tx.item_name}')">Delete</button>
@@ -2290,6 +2315,7 @@ async function loadSalesRecords() {
                             ${sale.payment_status}
                         </span>
                     </td>
+                    <td>${sale.performed_by || '-'}</td>
                     <td>
                         <div class="action-buttons">
                             <button class="action-btn edit" onclick="viewSaleDetails('${sale.sale_num}')">View</button>
