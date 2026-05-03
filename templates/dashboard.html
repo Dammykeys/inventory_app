@@ -46,6 +46,10 @@
                     <i class="fas fa-receipt"></i>
                     <span>Expenses</span>
                 </a>
+                <a href="#" class="nav-item" data-page="customers">
+                    <i class="fas fa-address-book"></i>
+                    <span>Customers</span>
+                </a>
                 <a href="#" class="nav-item admin-only" data-page="admin" style="display: none;">
                     <i class="fas fa-users-cog"></i>
                     <span>Admin Panel</span>
@@ -518,6 +522,7 @@
                                 </div>
                             </div>
                             <datalist id="saleItemSuggestions"></datalist>
+                            <datalist id="customerSuggestions"></datalist>
 
                             <button type="button" class="btn btn-secondary" id="addItemBtn">
                                 <i class="fas fa-plus"></i> Add Item
@@ -769,6 +774,39 @@
         </div>
     </div>
 
+    <!-- Customer Modal -->
+    <div id="customerModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <span class="close" onclick="closeCustomerModal()">&times;</span>
+            <div class="modal-icon"><i class="fas fa-user-tag"></i></div>
+            <h2 id="customerModalTitle">Add Customer</h2>
+            <p>Enter the details below to save a customer record.</p>
+            <form id="customerForm">
+                <input type="hidden" id="customerId">
+                <div class="form-group">
+                    <label for="customerName">Full Name <span class="required">*</span></label>
+                    <input type="text" id="customerName" required placeholder="Enter name">
+                </div>
+                <div class="form-group">
+                    <label for="customerPhone">Phone Number</label>
+                    <input type="tel" id="customerPhone" placeholder="Enter phone number">
+                </div>
+                <div class="form-group">
+                    <label for="customerEmail">Email Address</label>
+                    <input type="email" id="customerEmail" placeholder="Enter email address">
+                </div>
+                <div class="form-group">
+                    <label for="customerAddress">Address</label>
+                    <textarea id="customerAddress" rows="3" placeholder="Enter residential or business address"></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn btn-primary">Save Customer</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeCustomerModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Update Payment Status Modal -->
     <div id="updateStatusModal" class="modal">
         <div class="modal-content" style="max-width: 400px;">
@@ -795,8 +833,45 @@
         </div>
     </div>
 
-    <!-- Admin Page -->
-    <section id="admin" class="page">
+        <!-- Customers Page -->
+        <section id="customers" class="page">
+            <div class="page-header">
+                <h2>Customer Management</h2>
+                <div class="header-actions">
+                    <div class="search-box">
+                        <i class="fas fa-search"></i>
+                        <input type="text" id="searchCustomers" placeholder="Search customers...">
+                    </div>
+                    <button class="btn btn-primary" onclick="openCustomerModal()">
+                        <i class="fas fa-user-plus"></i> Add Customer
+                    </button>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="table-responsive">
+                    <table class="table-hover">
+                        <thead>
+                            <tr>
+                                <th>S/N</th>
+                                <th>Name</th>
+                                <th>Phone</th>
+                                <th>Email</th>
+                                <th>Address</th>
+                                <th>Total Debt</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="customersTable">
+                            <!-- Customers will be loaded here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- Admin Page -->
+        <section id="admin" class="page">
         <div class="page-header">
             <h2>User Management</h2>
             <div class="filter-group">
@@ -923,6 +998,10 @@
         <a href="#" class="bottom-nav-item" data-page="expenses">
             <i class="fas fa-receipt"></i>
             <span>Expenses</span>
+        </a>
+        <a href="#" class="bottom-nav-item" data-page="customers">
+            <i class="fas fa-address-book"></i>
+            <span>Customers</span>
         </a>
         <a href="#" class="bottom-nav-item" id="moreMobileNav">
             <i class="fas fa-ellipsis-h"></i>

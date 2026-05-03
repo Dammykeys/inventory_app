@@ -241,6 +241,9 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
+        const customerForm = document.getElementById('customerForm');
+        if (customerForm) customerForm.addEventListener('submit', handleCustomerSubmit);
+
         console.log('Other forms listeners attached');
     } catch (err) {
         console.error('Error during Other Forms initialization:', err);
@@ -365,6 +368,15 @@ function showPage(pageName) {
     if (pageName === 'sales') {
         loadSalesHistory();
         loadSalesRecords();
+        // Pre-load customer suggestions for POS autocomplete
+        fetch('/api/customers').then(r => r.json()).then(customers => {
+            if (Array.isArray(customers)) {
+                const datalist = document.getElementById('customerSuggestions');
+                if (datalist) {
+                    datalist.innerHTML = customers.map(c => `<option value="${c.name}">`).join('');
+                }
+            }
+        }).catch(() => {});
     }
     if (pageName === 'admin') {
         loadUsers();
@@ -376,6 +388,9 @@ function showPage(pageName) {
     }
     if (pageName === 'lowStockItems') {
         loadLowStockItems();
+    }
+    if (pageName === 'customers') {
+        loadCustomers();
     }
 }
 
@@ -511,7 +526,7 @@ window.alert = function (message) {
 // ==================== OFFLINE FUNCTIONALITY ====================
 // IndexedDB Setup
 const DB_NAME = 'InventoryAppDB';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 let db;
 
 // Initialize IndexedDB
@@ -543,6 +558,9 @@ async function initIndexedDB() {
             }
             if (!db.objectStoreNames.contains('dashboard')) {
                 db.createObjectStore('dashboard', { keyPath: 'id' });
+            }
+            if (!db.objectStoreNames.contains('customers')) {
+                db.createObjectStore('customers', { keyPath: 'id' });
             }
             if (!db.objectStoreNames.contains('syncQueue')) {
                 db.createObjectStore('syncQueue', { keyPath: 'id', autoIncrement: true });
@@ -2492,5 +2510,150 @@ async function handleExpenseSubmit(e) {
     } catch (error) {
         console.error('Error:', error);
         showNotification('Error recording expense', 'error');
+    }
+}
+
+// --- CUSTOMER MANAGEMENT ---
+async function loadCustomers() {
+    // 1. Show cached data immediately
+    try {
+        const cached = await getFromIndexedDB('customers');
+        if (cached && cached.length > 0) {
+            renderCustomers(cached);
+        }
+    } catch (err) {
+        console.warn('Customer cache load failed:', err);
+    }
+
+    // 2. Fetch fresh data in background
+    try {
+        const response = await fetch('/api/customers');
+        const customers = await response.json();
+
+        if (Array.isArray(customers)) {
+            renderCustomers(customers);
+            // Update cache
+            await saveToIndexedDB('customers', customers);
+        }
+    } catch (error) {
+        console.error('Error loading customers:', error);
+        if (!navigator.onLine) {
+            showNotification('Offline - showing cached customers', 'info');
+        }
+    }
+}
+
+function renderCustomers(customers) {
+    const table = document.getElementById('customersTable');
+    if (!table) return;
+
+    table.innerHTML = customers.map((c, index) => `
+        <tr>
+            <td>${index + 1}</td>
+            <td><strong>${c.name}</strong></td>
+            <td>${c.phone || '-'}</td>
+            <td>${c.email || '-'}</td>
+            <td>${c.address || '-'}</td>
+            <td>₦${parseFloat(c.total_debt || 0).toFixed(2)}</td>
+            <td>
+                <div class="action-buttons">
+                    <button class="action-btn edit" onclick="editCustomer(${JSON.stringify(c).replace(/"/g, '&quot;')})">Edit</button>
+                    <button class="action-btn delete" onclick="confirmDeleteCustomer(${c.id}, '${c.name}')">Delete</button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+
+    if (customers.length === 0) {
+        table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No customers found</td></tr>';
+    }
+
+    // Populate customer name autocomplete for POS form
+    const datalist = document.getElementById('customerSuggestions');
+    if (datalist) {
+        datalist.innerHTML = customers.map(c => `<option value="${c.name}">`).join('');
+    }
+
+    // Setup search
+    const searchInput = document.getElementById('searchCustomers');
+    if (searchInput) {
+        searchInput.onkeyup = () => {
+            const searchTerm = searchInput.value.toLowerCase();
+            document.querySelectorAll('#customersTable tr').forEach(row => {
+                const text = row.textContent.toLowerCase();
+                row.style.display = text.includes(searchTerm) ? '' : 'none';
+            });
+        };
+    }
+}
+
+function openCustomerModal() {
+    document.getElementById('customerModalTitle').innerText = 'Add Customer';
+    document.getElementById('customerId').value = '';
+    document.getElementById('customerForm').reset();
+    document.getElementById('customerModal').classList.add('show');
+}
+
+function closeCustomerModal() {
+    document.getElementById('customerModal').classList.remove('show');
+}
+
+function editCustomer(c) {
+    document.getElementById('customerModalTitle').innerText = 'Edit Customer';
+    document.getElementById('customerId').value = c.id;
+    document.getElementById('customerName').value = c.name;
+    document.getElementById('customerPhone').value = c.phone || '';
+    document.getElementById('customerEmail').value = c.email || '';
+    document.getElementById('customerAddress').value = c.address || '';
+    document.getElementById('customerModal').classList.add('show');
+}
+
+async function handleCustomerSubmit(e) {
+    e.preventDefault();
+    const id = document.getElementById('customerId').value;
+    const name = document.getElementById('customerName').value.trim();
+    const phone = document.getElementById('customerPhone').value.trim();
+    const email = document.getElementById('customerEmail').value.trim();
+    const address = document.getElementById('customerAddress').value.trim();
+
+    const endpoint = id ? `/api/update-customer/${id}` : '/api/add-customer';
+    
+    try {
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, phone, email, address })
+        });
+        const result = await response.json();
+        if (result.success) {
+            showNotification(result.message, 'success');
+            closeCustomerModal();
+            loadCustomers();
+        } else {
+            showNotification(result.error, 'error');
+        }
+    } catch (error) {
+        console.error('Error saving customer:', error);
+        showNotification('Error saving customer', 'error');
+    }
+}
+
+async function confirmDeleteCustomer(id, name) {
+    if (confirm(`Are you sure you want to delete customer "${name}"?`)) {
+        try {
+            const response = await fetch(`/api/delete-customer/${id}`, {
+                method: 'DELETE'
+            });
+            const result = await response.json();
+            if (result.success) {
+                showNotification('Customer deleted', 'success');
+                loadCustomers();
+            } else {
+                showNotification(result.error, 'error');
+            }
+        } catch (error) {
+            console.error('Error deleting customer:', error);
+            showNotification('Error deleting customer', 'error');
+        }
     }
 }

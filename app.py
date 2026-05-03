@@ -133,6 +133,15 @@ def init_db():
                            action TEXT, 
                            details TEXT, 
                            timestamp TEXT)''')
+
+        cursor.execute('''CREATE TABLE IF NOT EXISTS customers 
+                          (id SERIAL PRIMARY KEY, 
+                           name TEXT UNIQUE, 
+                           phone TEXT, 
+                           email TEXT, 
+                           address TEXT, 
+                           total_debt DOUBLE PRECISION DEFAULT 0,
+                           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     
         # Create default admin if not exists
         cursor.execute("SELECT * FROM users WHERE username=%s", ('admin',))
@@ -753,8 +762,25 @@ def create_sale():
         cursor.execute("INSERT INTO sales (sale_num, customer, date, time, total_amount, payment_status) VALUES (%s,%s,%s,%s,%s,%s)",
                       (sale_num, customer, today, current_time, total_amount, payment_status))
         
+        # --- CUSTOMER MANAGEMENT SYNC ---
+        # 1. Check if customer exists, if not create them
+        cursor.execute("SELECT id, total_debt FROM customers WHERE name = %s", (customer,))
+        cust_record = cursor.fetchone()
+        
+        if not cust_record:
+            # Auto-create customer
+            cursor.execute("INSERT INTO customers (name, total_debt) VALUES (%s, 0) RETURNING id", (customer,))
+            cust_record = {'id': cursor.fetchone()['id'], 'total_debt': 0}
+            print(f"DEBUG: Auto-created customer: {customer}")
+
+        # 2. Update debt if it's a Credit sale
+        if payment_status == 'Credit':
+            cursor.execute("UPDATE customers SET total_debt = total_debt + %s WHERE id = %s", 
+                           (total_amount, cust_record['id']))
+            print(f"DEBUG: Updated debt for {customer}: +{total_amount}")
+        
         conn.commit()
-        log_activity('Create Sale', f"Sale No: {sale_num}, Total: {total_amount}")
+        log_activity('Create Sale', f"Sale No: {sale_num}, Total: {total_amount}, Customer: {customer}")
         return jsonify({'success': True, 'message': 'Sale created successfully', 'sale_num': sale_num, 'total': total_amount})
     except Exception as e:
         conn.rollback()
@@ -1009,6 +1035,21 @@ def update_sale_status(sale_num):
             return jsonify({'success': False, 'error': 'Sale not found'}), 404
         
         cursor.execute("UPDATE sales SET payment_status=%s WHERE sale_num=%s", (new_status, sale_num))
+        
+        # Update customer debt if status changed from Credit to Paid
+        if sale['payment_status'] == 'Credit' and new_status == 'Paid':
+            cursor.execute("UPDATE customers SET total_debt = total_debt - %s WHERE name = %s", 
+                           (sale['total_amount'], sale['customer']))
+        # Update customer debt if status changed from something else to Credit
+        elif sale['payment_status'] != 'Credit' and new_status == 'Credit':
+            # Ensure customer exists (could have been deleted or manually added to sales)
+            cursor.execute("SELECT id FROM customers WHERE name = %s", (sale['customer'],))
+            if not cursor.fetchone():
+                cursor.execute("INSERT INTO customers (name, total_debt) VALUES (%s, 0)", (sale['customer'],))
+            
+            cursor.execute("UPDATE customers SET total_debt = total_debt + %s WHERE name = %s", 
+                           (sale['total_amount'], sale['customer']))
+
         conn.commit()
         return jsonify({'success': True, 'message': f'Payment status updated to {new_status}'})
     except Exception as e:
@@ -1460,6 +1501,83 @@ def current_user():
             'role': session.get('role')
         }
     })
+
+# --- CUSTOMER ENDPOINTS ---
+@app.route('/api/customers')
+@login_required
+def get_customers():
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT * FROM customers ORDER BY name ASC")
+        customers = cursor.fetchall()
+        for cust in customers:
+            if cust['created_at']:
+                cust['created_at'] = cust['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+        return jsonify(customers)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        release_db_connection(conn)
+
+@app.route('/api/add-customer', methods=['POST'])
+@login_required
+def add_customer():
+    data = request.json
+    name = data.get('name', '').strip()
+    phone = data.get('phone', '').strip()
+    email = data.get('email', '').strip()
+    address = data.get('address', '').strip()
+
+    if not name:
+        return jsonify({'success': False, 'error': 'Name is required'}), 400
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO customers (name, phone, email, address) VALUES (%s, %s, %s, %s)",
+                       (name, phone, email, address))
+        conn.commit()
+        return jsonify({'success': True, 'message': 'Customer added successfully'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        release_db_connection(conn)
+
+@app.route('/api/update-customer/<int:customer_id>', methods=['POST'])
+@login_required
+def update_customer_endpoint(customer_id):
+    data = request.json
+    name = data.get('name', '').strip()
+    phone = data.get('phone', '').strip()
+    email = data.get('email', '').strip()
+    address = data.get('address', '').strip()
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE customers SET name=%s, phone=%s, email=%s, address=%s WHERE id=%s",
+                       (name, phone, email, address, customer_id))
+        conn.commit()
+        return jsonify({'success': True, 'message': 'Customer updated successfully'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        release_db_connection(conn)
+
+@app.route('/api/delete-customer/<int:customer_id>', methods=['DELETE'])
+@login_required
+def delete_customer(customer_id):
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM customers WHERE id=%s", (customer_id,))
+        conn.commit()
+        return jsonify({'success': True, 'message': 'Customer deleted successfully'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        release_db_connection(conn)
 
 if __name__ == '__main__':
     app.run(debug=True)

@@ -168,6 +168,7 @@ body {
     min-height: 100vh;
     transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     background-color: var(--bg-main);
+    overflow-x: hidden;
 }
 
 
@@ -366,6 +367,8 @@ body {
     display: none;
     padding: 1.5rem;
     width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
 }
 
 .page.active {
@@ -1010,6 +1013,12 @@ tbody tr:hover {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 20px;
+    overflow: hidden;
+}
+
+.sales-container > .card {
+    min-width: 0;
+    overflow: hidden;
 }
 
 .divider {
@@ -1028,7 +1037,7 @@ tbody tr:hover {
 
 .sale-item-row .form-row {
     display: grid;
-    grid-template-columns: 2fr 1fr 1fr 1.5fr 0.8fr;
+    grid-template-columns: 2fr 1fr 1fr 1.5fr auto;
     gap: 10px;
     align-items: flex-end;
 }
@@ -1114,6 +1123,12 @@ tbody tr:hover {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 20px;
+    overflow: hidden;
+}
+
+.expenses-container > .card {
+    min-width: 0;
+    overflow: hidden;
 }
 
 .category-item {
@@ -1147,6 +1162,7 @@ tbody tr:hover {
         top: 0;
         bottom: 0;
         width: var(--sidebar-w);
+        z-index: 1100;
         transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         box-shadow: 10px 0 30px rgba(0, 0, 0, 0.2);
     }
@@ -1164,8 +1180,9 @@ tbody tr:hover {
     }
 
     .main-content {
-        padding-top: 70px; /* Header height */
+        padding-top: 70px;
         margin-left: 0;
+        overflow-x: hidden;
     }
 
 
@@ -1201,6 +1218,57 @@ tbody tr:hover {
         grid-template-columns: repeat(2, 1fr);
         gap: 0.75rem;
     }
+
+    /* POS Page: stack the two-column layout vertically */
+    .sales-container {
+        grid-template-columns: 1fr;
+    }
+
+    /* Expenses Page: stack vertically too */
+    .expenses-container {
+        grid-template-columns: 1fr;
+    }
+
+    /* POS Item Rows: single column stack on mobile */
+    .sale-item-row .form-row {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .sale-item-row {
+        padding: 1rem;
+    }
+
+    /* Each form-group must fill the full row width */
+    .sale-item-row .form-row > .form-group {
+        width: 100%;
+    }
+
+    /* Hide the empty spacer label above Remove button */
+    .sale-item-row .btn-group > label {
+        display: none;
+    }
+
+    /* Remove button full width */
+    .sale-item-row .btn-group {
+        flex-direction: row;
+        width: 100%;
+    }
+
+    .sale-item-row .btn-group .remove-item {
+        width: 100%;
+        justify-content: center;
+        padding: 0.625rem;
+    }
+
+    /* Form inputs full width */
+    .sale-item-row input,
+    .sale-item-row select {
+        width: 100%;
+        box-sizing: border-box;
+    }
+
 
     .stat-card {
         padding: 1rem;
