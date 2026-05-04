@@ -131,14 +131,14 @@
                 </div>
 
                 <div class="sales-stats-grid">
-                    <div class="stat-card clickable-card" onclick="showPage('sales')">
+                    <div class="stat-card clickable-card" onclick="showPage('sales_history')">
                         <i class="fas fa-shopping-cart" style="color: var(--primary-color);"></i>
                         <div>
                             <h3>Today's Sales</h3>
                             <p class="stat-value" id="todaysSales">0</p>
                         </div>
                     </div>
-                    <div class="stat-card clickable-card" onclick="showPage('sales')">
+                    <div class="stat-card clickable-card" onclick="showPage('sales_history')">
                         <i class="fas fa-money-bill-wave" style="color: var(--secondary-color);"></i>
                         <div>
                             <h3>Total Revenue</h3>
@@ -152,14 +152,14 @@
                             <p class="stat-value" id="totalExpenses">₦0.00</p>
                         </div>
                     </div>
-                    <div class="stat-card clickable-card" onclick="showPage('sales')">
+                    <div class="stat-card clickable-card" onclick="showPage('sales_history')">
                         <i class="fas fa-handshake" style="color: #f59e0b;"></i>
                         <div>
                             <h3>Total Credit</h3>
                             <p class="stat-value" id="totalCredit">₦0.00</p>
                         </div>
                     </div>
-                    <div class="stat-card clickable-card" onclick="showPage('sales')">
+                    <div class="stat-card clickable-card" onclick="showPage('sales_history')">
                         <i class="fas fa-clock" style="color: #ef4444;"></i>
                         <div>
                             <h3>Total Pending</h3>
@@ -197,10 +197,10 @@
                             </table>
                         </div>
                     </div>
-                    <div class="card clickable-card" onclick="showPage('transactions')">
+                    <div class="card clickable-card" onclick="showPage('stock_log')">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
                             <h3 style="margin: 0;">Recent Transactions</h3>
-                            <a href="#" class="view-all-link" onclick="event.stopPropagation(); showPage('transactions'); return false;">View All <i class="fas fa-arrow-right"></i></a>
+                            <a href="#" class="view-all-link" onclick="event.stopPropagation(); showPage('stock_log'); return false;">View All <i class="fas fa-arrow-right"></i></a>
                         </div>
                         <div class="table-responsive">
                             <table>
@@ -221,10 +221,10 @@
                     </div>
                 </div>
 
-                <div class="card clickable-card" style="margin-top: 20px;" onclick="showPage('sales')">
+                <div class="card clickable-card" style="margin-top: 20px;" onclick="showPage('sales_history')">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
                         <h3 style="margin: 0;">Recent Sales & Credit</h3>
-                        <a href="#" class="view-all-link" onclick="event.stopPropagation(); showPage('sales'); return false;">View All <i class="fas fa-arrow-right"></i></a>
+                        <a href="#" class="view-all-link" onclick="event.stopPropagation(); showPage('sales_history'); return false;">View All <i class="fas fa-arrow-right"></i></a>
                     </div>
                     <div class="table-responsive">
                         <table>
@@ -407,7 +407,6 @@
                 </div>
             </section>
 
-            <!-- Transactions Page -->
             <!-- Stock Log Page -->
             <section id="stock_log" class="page">
                 <div class="page-header">
@@ -566,47 +565,13 @@
                         </form>
                     </div>
 
-                    <!-- Recent Sales (Condensed) -->
-                    <div class="card">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                            <h3 style="margin: 0;">Recent Sales</h3>
-                            <button class="btn btn-secondary btn-small" onclick="showPage('sales_history')">
-                                View All History <i class="fas fa-arrow-right"></i>
-                            </button>
-                        </div>
-                        <div class="table-responsive">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Sale No</th>
-                                        <th>Customer</th>
-                                        <th>Date</th>
-                                        <th>Amount</th>
-                                        <th>Status</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="recentSalesTable">
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Full Sales History Page -->
-                <section id="sales_history" class="page" style="display: none;">
-                    <div class="page-header">
-                        <h2>Full Sales Documentation</h2>
-                        <button class="btn btn-primary" onclick="showPage('sales')">
-                            <i class="fas fa-cart-plus"></i> New Sale
-                        </button>
-                    </div>
-                    <div class="card">
+                    <!-- POS Records -->
+                    <div class="card" style="margin-top: 20px;">
+                        <h3>Sales & Credit Records</h3>
                         <div class="filter-group">
-                            <input type="date" id="salesHistoryDate" class="filter-input">
-                            <input type="text" id="searchCustomer" placeholder="Search by customer..." class="filter-input">
-                            <button id="searchSalesBtn" class="btn btn-secondary">
-                                <i class="fas fa-search"></i> Search
+                            <input type="date" id="salesRecordsDateFilter" class="filter-input">
+                            <button id="filterSalesRecordsBtn" class="btn btn-secondary">
+                                <i class="fas fa-filter"></i> Filter
                             </button>
                         </div>
                         <div class="table-responsive">
@@ -619,22 +584,32 @@
                                         <th>Date</th>
                                         <th>Total Amount</th>
                                         <th>Payment Status</th>
+                                        <th>Staff</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
-                                <tbody id="salesTable">
+                                <tbody id="salesRecordsTable">
                                 </tbody>
                             </table>
                         </div>
-                    </section>
+                    </div>
+                </div>
+            </section>
 
-                <!-- POS Records -->
-                <div class="card" style="margin-top: 20px;">
-                    <h3>Sales & Credit Records</h3>
+            <!-- Full Sales History Page -->
+            <section id="sales_history" class="page">
+                <div class="page-header">
+                    <h2>Full Sales Documentation</h2>
+                    <button class="btn btn-primary" onclick="showPage('sales')">
+                        <i class="fas fa-cart-plus"></i> New Sale
+                    </button>
+                </div>
+                <div class="card">
                     <div class="filter-group">
-                        <input type="date" id="salesRecordsDateFilter" class="filter-input">
-                        <button id="filterSalesRecordsBtn" class="btn btn-secondary">
-                            <i class="fas fa-filter"></i> Filter
+                        <input type="date" id="salesHistoryDate" class="filter-input">
+                        <input type="text" id="searchCustomer" placeholder="Search by customer..." class="filter-input">
+                        <button id="searchSalesBtn" class="btn btn-secondary">
+                            <i class="fas fa-search"></i> Search
                         </button>
                     </div>
                     <div class="table-responsive">
@@ -651,7 +626,7 @@
                                     <th>Actions</th>
                                 </tr>
                             </thead>
-                            <tbody id="salesRecordsTable">
+                            <tbody id="salesTable">
                             </tbody>
                         </table>
                     </div>
@@ -763,21 +738,32 @@
                 </div>
             </section>
 
-    <!-- Modal for updating reorder level -->
+    <!-- Modal for updating reorder level and pricing-->
     <div id="reorderModal" class="modal">
         <div class="modal-content">
             <span class="close" onclick="closeReorderModal()">&times;</span>
             <div class="modal-icon"><i class="fas fa-sync-alt"></i></div>
-            <h2>Update Reorder Level</h2>
-            <p>Set a new threshold for low stock alerts.</p>
+            <h2>Update Item Details</h2>
+            <p id="quickUpdateItemDisplay" style="font-weight: 700; color: var(--primary-color); margin-bottom: 0.5rem; font-size: 1.1rem;"></p>
+            <p>Update pricing and reorder threshold for this item.</p>
             <form id="quickReorderForm">
                 <input type="hidden" id="quickReorderItem">
                 <div class="form-group" style="text-align: left;">
-                    <label for="quickReorderLevel">New Reorder Level</label>
+                    <label for="quickReorderLevel">Reorder Level</label>
                     <input type="number" id="quickReorderLevel" min="0" required placeholder="Enter quantity">
                 </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div class="form-group" style="text-align: left;">
+                        <label for="quickCostPrice">Cost Price (₦)</label>
+                        <input type="number" id="quickCostPrice" step="0.01" min="0" required placeholder="0.00">
+                    </div>
+                    <div class="form-group" style="text-align: left;">
+                        <label for="quickSellingPrice">Selling Price (₦)</label>
+                        <input type="number" id="quickSellingPrice" step="0.01" min="0" required placeholder="0.00">
+                    </div>
+                </div>
                 <div class="modal-actions">
-                    <button type="submit" class="btn btn-primary">Update Level</button>
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
                     <button type="button" class="btn btn-secondary" onclick="closeReorderModal()">Cancel</button>
                 </div>
             </form>

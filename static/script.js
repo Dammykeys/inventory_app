@@ -374,22 +374,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const searchSalesBtn = document.getElementById('searchSalesBtn');
         if (searchSalesBtn) {
-            searchSalesBtn.addEventListener('click', async () => {
-                const customerEl = document.getElementById('searchCustomer');
-                const dateEl = document.getElementById('salesHistoryDate');
-                if (!customerEl || !dateEl) return;
-                
-                const customer = customerEl.value.trim();
-                const date = dateEl.value;
-
-                try {
-                    const response = await fetch(`/api/search-sales?customer=${customer}&date=${date}`);
-                    const sales = await response.json();
-                    renderSearchResults(sales);
-                } catch (error) {
-                    console.error('Error searching sales:', error);
-                    showNotification('Error searching sales', 'error');
-                }
+            searchSalesBtn.addEventListener('click', () => {
+                const customer = document.getElementById('searchCustomer').value.trim();
+                const date = document.getElementById('salesHistoryDate').value;
+                loadSalesHistory(date, customer);
             });
         }
 
@@ -1122,7 +1110,7 @@ function renderDashboard(inventoryStats, lowStockProducts, transactions, salesSu
     recentSalesTable.innerHTML = recentSalesLimited.map((sale, index) => {
         const statusColor = sale.payment_status.toLowerCase();
         return `
-            <tr>
+            <tr onclick="showPage('sales_history')" style="cursor: pointer;" title="Click to view all records">
                 <td>${index + 1}</td>
                 <td><strong>${sale.sale_num}</strong></td>
                 <td>${sale.customer}</td>
@@ -1183,7 +1171,10 @@ function renderInventory(products) {
     const table = document.getElementById('inventoryTable');
     if (!table) return;
 
-    table.innerHTML = products.map((item, index) => {
+    // Sort alphabetically by name
+    const sortedProducts = [...products].sort((a, b) => a.name.localeCompare(b.name));
+
+    table.innerHTML = sortedProducts.map((item, index) => {
         const isLow = item.quantity <= item.reorder_level;
         return `
             <tr class="${isLow ? 'low-stock-row' : ''}">
@@ -1201,14 +1192,14 @@ function renderInventory(products) {
                 </td>
                 <td>
                     <div class="action-buttons">
-                        <button class="action-btn edit" onclick="openReorderModal('${item.name}', ${item.reorder_level})">Update</button>
+                        <button class="action-btn edit" onclick="openReorderModal('${item.name}', ${item.reorder_level}, ${item.cost_price || 0}, ${item.selling_price || 0})">Update</button>
                     </div>
                 </td>
             </tr>
         `;
     }).join('');
 
-    if (products.length === 0) {
+    if (sortedProducts.length === 0) {
         table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No items in inventory</td></tr>';
     }
 
@@ -1232,7 +1223,7 @@ function setupInventorySearch() {
 
 // Update item suggestions for forms
 function updateItemSuggestions(products) {
-    window.inventoryItemNames = products.map(p => p.name);
+    window.inventoryItemNames = products.map(p => p.name).sort((a, b) => a.localeCompare(b));
 }
 
 // Initialize autocomplete for static fields
@@ -1446,19 +1437,35 @@ document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
 const modal = document.getElementById('reorderModal');
 const closeBtn = document.querySelector('.close');
 
-function openReorderModal(itemName, currentLevel) {
-    document.getElementById('quickReorderItem').value = itemName;
-    document.getElementById('quickReorderLevel').value = currentLevel;
-    modal.classList.add('show');
+function openReorderModal(itemName, currentLevel, costPrice, sellingPrice) {
+    const itemEl = document.getElementById('quickReorderItem');
+    const levelEl = document.getElementById('quickReorderLevel');
+    const costEl = document.getElementById('quickCostPrice');
+    const sellingEl = document.getElementById('quickSellingPrice');
+    const modalEl = document.getElementById('reorderModal');
+    const displayEl = document.getElementById('quickUpdateItemDisplay');
+    
+    if (itemEl) itemEl.value = itemName;
+    if (displayEl) displayEl.textContent = itemName;
+    if (levelEl) levelEl.value = currentLevel;
+    if (costEl) costEl.value = costPrice || 0;
+    if (sellingEl) sellingEl.value = sellingPrice || 0;
+    
+    if (modalEl) modalEl.classList.add('show');
 }
 
-closeBtn.addEventListener('click', () => {
-    modal.classList.remove('show');
-});
+function closeReorderModal() {
+    const modalEl = document.getElementById('reorderModal');
+    if (modalEl) modalEl.classList.remove('show');
+}
+
+if (closeBtn) {
+    closeBtn.addEventListener('click', closeReorderModal);
+}
 
 window.addEventListener('click', (e) => {
     if (e.target === modal) {
-        modal.classList.remove('show');
+        closeReorderModal();
     }
 });
 
@@ -1466,27 +1473,55 @@ async function handleQuickReorderSubmit(e) {
     e.preventDefault();
 
     const name = document.getElementById('quickReorderItem').value;
-    const level = parseInt(document.getElementById('quickReorderLevel').value);
+    const level = parseFloat(document.getElementById('quickReorderLevel').value) || 0;
+    const cost_price = parseFloat(document.getElementById('quickCostPrice').value) || 0;
+    const selling_price = parseFloat(document.getElementById('quickSellingPrice').value) || 0;
+
+    // Visual feedback on the submit button
+    const submitBtn = document.querySelector('#quickReorderForm button[type="submit"]');
+    const originalBtnText = submitBtn.innerHTML;
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
 
     try {
         const response = await fetch('/api/update-reorder', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, level })
+            body: JSON.stringify({ name, level, cost_price, selling_price })
         });
 
         const result = await response.json();
 
         if (result.success) {
-            showNotification('Reorder level updated', 'success');
-            modal.classList.remove('show');
-            loadInventory();
+            submitBtn.innerHTML = '<i class="fas fa-check"></i> Saved!';
+            setTimeout(() => {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = originalBtnText;
+                showNotification('Item details updated', 'success');
+                closeReorderModal();
+                loadInventory();
+                loadDashboard();
+            }, 600);
+        } else {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalBtnText;
+            showNotification(result.error || 'Update failed', 'error');
         }
     } catch (error) {
-        showNotification('Error updating reorder level', 'error');
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalBtnText;
+        showNotification('Error updating item details', 'error');
     }
 }
 document.getElementById('quickReorderForm').addEventListener('submit', handleQuickReorderSubmit);
+
+// Enter key confirms the update modal
+document.getElementById('reorderModal').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('quickReorderForm').requestSubmit();
+    }
+});
 
 // --- AUTHENTICATION & ADMIN ---
 let currentUserId = null;
@@ -1543,7 +1578,7 @@ document.getElementById('logoutBtn')?.addEventListener('click', () => {
             console.error('Logout error:', error);
             window.location.href = '/login';
         }
-    });
+    }, 'Yes, Log Out', 'Cancel');
 });
 
 // --- ADMIN PANEL FUNCTIONS ---
@@ -2085,9 +2120,11 @@ document.getElementById('confirmBtn').addEventListener('click', async () => {
 
 // Helper for confirmation actions
 let confirmCallback = null;
-function confirmAction(message, callback) {
+function confirmAction(message, callback, confirmLabel = 'Yes, Delete', cancelLabel = 'No, Keep it') {
     confirmCallback = callback;
     document.getElementById('confirmMessage').textContent = message;
+    document.getElementById('confirmBtn').textContent = confirmLabel;
+    document.getElementById('cancelBtn').textContent = cancelLabel;
     document.getElementById('confirmModal').classList.add('show');
 }
 
@@ -2097,11 +2134,18 @@ document.getElementById('confirmBtn').addEventListener('click', () => {
         confirmCallback();
         confirmCallback = null;
         document.getElementById('confirmModal').classList.remove('show');
+        // Reset button labels to defaults
+        document.getElementById('confirmBtn').textContent = 'Yes, Delete';
+        document.getElementById('cancelBtn').textContent = 'No, Keep it';
     }
 });
 
 document.getElementById('cancelBtn').addEventListener('click', () => {
     confirmModal.classList.remove('show');
+    confirmCallback = null;
+    // Reset button labels to defaults
+    document.getElementById('confirmBtn').textContent = 'Yes, Delete';
+    document.getElementById('cancelBtn').textContent = 'No, Keep it';
 });
 
 // --- SALES PAGE FUNCTIONALITY ---
@@ -2401,28 +2445,13 @@ async function handleSaleSubmit(e) {
 }
 document.getElementById('saleForm').addEventListener('submit', handleSaleSubmit);
 
-async function loadSalesHistory() {
+async function loadSalesHistory(dateFilter = '', customerFilter = '') {
     try {
-        let dateFilter = '';
-        const salesDateFilter = document.getElementById('salesDateFilter');
-
-        // If no filter set, default to today
-        if (salesDateFilter) {
-            dateFilter = salesDateFilter.value;
-            if (!dateFilter) {
-                const today = new Date().toISOString().split('T')[0];
-                dateFilter = today;
-                salesDateFilter.value = today;
-            }
-        }
-
-        let url = '/api/sales';
-        if (dateFilter) {
-            url += `?date=${dateFilter}`;
-        }
+        let url = `/api/sales?date=${dateFilter || ''}&customer=${customerFilter || ''}`;
 
         const response = await fetch(url);
-        const sales = await response.json();
+        const salesData = await response.json();
+        const sales = Array.isArray(salesData) ? salesData : [];
 
         // Cache sales data
         await saveToIndexedDB('sales', sales);
@@ -2431,24 +2460,26 @@ async function loadSalesHistory() {
         const recentTable = document.getElementById('recentSalesTable');
 
         const rowsHTML = sales.map((sale, index) => {
-            const statusColor = sale.payment_status.toLowerCase();
+            const status = sale.payment_status || 'Paid';
+            const statusColor = status.toLowerCase();
             return `
                 <tr>
                     <td>${index + 1}</td>
                     <td><strong>${sale.sale_num}</strong></td>
-                    <td>${sale.customer}</td>
+                    <td>${sale.customer || 'Unknown'}</td>
                     <td>${sale.date}</td>
-                    <td>₦${formatCurrency(sale.total_amount)}</td>
+                    <td>₦${formatCurrency(sale.total_amount || 0)}</td>
                     <td>
                         <span class="payment-status-badge ${statusColor}">
-                            ${sale.payment_status}
+                            ${status}
                         </span>
                     </td>
+                    <td>${sale.performed_by || '-'}</td>
                     <td>
                         <div class="action-buttons">
                             <button class="action-btn edit" onclick="viewSaleDetails('${sale.sale_num}')">View</button>
-                            ${sale.payment_status === 'Credit' ? `<button class="action-btn success" onclick="quickUpdateStatus('${sale.sale_num}', 'Paid')">Mark Paid</button>` : ''}
-                            ${sale.payment_status === 'Pending' ? `<button class="action-btn success" onclick="quickUpdateStatus('${sale.sale_num}', 'Paid')">Mark Paid</button>` : ''}
+                            ${status === 'Credit' ? `<button class="action-btn success" onclick="quickUpdateStatus('${sale.sale_num}', 'Paid')">Mark Paid</button>` : ''}
+                            ${status === 'Pending' ? `<button class="action-btn success" onclick="quickUpdateStatus('${sale.sale_num}', 'Paid')">Mark Paid</button>` : ''}
                         </div>
                     </td>
                 </tr>
@@ -2456,21 +2487,22 @@ async function loadSalesHistory() {
         }).join('');
 
         if (table) {
-            table.innerHTML = rowsHTML || '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No sales recorded</td></tr>';
+            table.innerHTML = rowsHTML || '<tr><td colspan="8" style="text-align:center; color: var(--text-secondary);">No sales recorded</td></tr>';
         }
 
         if (recentTable) {
             // Show last 8 sales in condensed view
             const recentSales = sales.slice(0, 8);
             recentTable.innerHTML = recentSales.map(sale => {
-                const statusColor = sale.payment_status.toLowerCase();
+                const status = sale.payment_status || 'Paid';
+                const statusColor = status.toLowerCase();
                 return `
                     <tr>
                         <td><strong>${sale.sale_num}</strong></td>
-                        <td>${sale.customer}</td>
+                        <td>${sale.customer || 'Unknown'}</td>
                         <td>${sale.date}</td>
-                        <td>₦${formatCurrency(sale.total_amount)}</td>
-                        <td><span class="payment-status-badge ${statusColor}">${sale.payment_status}</span></td>
+                        <td>₦${formatCurrency(sale.total_amount || 0)}</td>
+                        <td><span class="payment-status-badge ${statusColor}">${status}</span></td>
                         <td><button class="action-btn edit" onclick="viewSaleDetails('${sale.sale_num}')">View</button></td>
                     </tr>
                 `;
@@ -2535,29 +2567,33 @@ async function loadSalesRecords() {
         }
 
         const response = await fetch(url);
-        const sales = await response.json();
+        const salesData = await response.json();
+        const sales = Array.isArray(salesData) ? salesData : [];
 
         const table = document.getElementById('salesRecordsTable');
+        if (!table) return;
+
         table.innerHTML = sales.map((sale, index) => {
-            const statusColor = sale.payment_status.toLowerCase();
+            const status = sale.payment_status || 'Paid';
+            const statusColor = status.toLowerCase();
             return `
                 <tr>
                     <td>${index + 1}</td>
                     <td><strong>${sale.sale_num}</strong></td>
-                    <td>${sale.customer}</td>
+                    <td>${sale.customer || 'Unknown'}</td>
                     <td>${sale.date}</td>
-                    <td>₦${formatCurrency(sale.total_amount)}</td>
+                    <td>₦${formatCurrency(sale.total_amount || 0)}</td>
                     <td>
                         <span class="payment-status-badge ${statusColor}">
-                            ${sale.payment_status}
+                            ${status}
                         </span>
                     </td>
                     <td>${sale.performed_by || '-'}</td>
                     <td>
                         <div class="action-buttons">
                             <button class="action-btn edit" onclick="viewSaleDetails('${sale.sale_num}')">View</button>
-                            ${sale.payment_status === 'Credit' ? `<button class="action-btn success" onclick="quickUpdateStatus('${sale.sale_num}', 'Paid')">Mark Paid</button>` : ''}
-                            ${sale.payment_status === 'Pending' ? `<button class="action-btn success" onclick="quickUpdateStatus('${sale.sale_num}', 'Paid')">Mark Paid</button>` : ''}
+                            ${status === 'Credit' ? `<button class="action-btn success" onclick="quickUpdateStatus('${sale.sale_num}', 'Paid')">Mark Paid</button>` : ''}
+                            ${status === 'Pending' ? `<button class="action-btn success" onclick="quickUpdateStatus('${sale.sale_num}', 'Paid')">Mark Paid</button>` : ''}
                             <button class="action-btn delete" onclick="confirmDeleteSale('${sale.sale_num}')">Delete</button>
                         </div>
                     </td>
@@ -2566,7 +2602,7 @@ async function loadSalesRecords() {
         }).join('');
 
         if (sales.length === 0) {
-            table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No sales recorded</td></tr>';
+            table.innerHTML = '<tr><td colspan="8" style="text-align:center; color: var(--text-secondary);">No sales recorded</td></tr>';
         }
     } catch (error) {
         console.error('Error loading sales records:', error);
@@ -2715,111 +2751,12 @@ async function quickUpdateStatus(saleNum, newStatus) {
     }
 }
 
-const searchSalesBtn = document.getElementById('searchSalesBtn');
-if (searchSalesBtn) {
-    searchSalesBtn.addEventListener('click', async () => {
-        const customer = document.getElementById('searchCustomer').value.trim();
-        const date = document.getElementById('salesHistoryDate').value;
 
-        try {
-            const url = new URL('/api/sales', window.location);
-            if (customer) url.searchParams.append('customer', customer);
-            if (date) url.searchParams.append('date', date);
 
-            const response = await fetch(url);
-            const sales = await response.json();
-
-            const table = document.getElementById('salesTable');
-            table.innerHTML = sales.map(sale => {
-                const statusColor = sale.payment_status.toLowerCase();
-                return `
-                    <tr>
-                        <td><strong>${sale.sale_num}</strong></td>
-                        <td>${sale.customer}</td>
-                        <td>${sale.date}</td>
-                        <td>₦${formatCurrency(sale.total_amount)}</td>
-                        <td>
-                            <span class="payment-status-badge ${statusColor}">
-                                ${sale.payment_status}
-                            </span>
-                        </td>
-                        <td>
-                            <div class="action-buttons">
-                                <button class="action-btn edit" onclick="viewSaleDetails('${sale.sale_num}')">View</button>
-                                ${sale.payment_status === 'Credit' ? `<button class="action-btn success" onclick="quickUpdateStatus('${sale.sale_num}', 'Paid')">Mark Paid</button>` : ''}
-                                ${sale.payment_status === 'Pending' ? `<button class="action-btn success" onclick="quickUpdateStatus('${sale.sale_num}', 'Paid')">Mark Paid</button>` : ''}
-                            </div>
-                        </td>
-                    </tr>
-                `;
-            }).join('');
-
-            if (sales.length === 0) {
-                table.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--text-secondary);">No sales found</td></tr>';
-            }
-        } catch (error) {
-            console.error('Error searching sales:', error);
-            showNotification('Error searching sales', 'error');
-        }
-    });
-}
-
-const filterSalesRecordsBtn = document.getElementById('filterSalesRecordsBtn');
-if (filterSalesRecordsBtn) {
-    filterSalesRecordsBtn.addEventListener('click', () => {
-        loadSalesRecords();
-    });
-}
+// Redundant listener removed - already handled in initializeEventListeners
 
 // --- MODAL & FORM HANDLERS ---
-function openReorderModal(name, currentLevel) {
-    const itemEl = document.getElementById('quickReorderItem');
-    const levelEl = document.getElementById('quickReorderLevel');
-    const modalEl = document.getElementById('reorderModal');
-    
-    if (itemEl) itemEl.value = name;
-    if (levelEl) levelEl.value = currentLevel;
-    if (modalEl) modalEl.classList.add('show');
-}
-
-function closeReorderModal() {
-    const modalEl = document.getElementById('reorderModal');
-    if (modalEl) modalEl.classList.remove('show');
-}
-
-async function handleQuickReorderSubmit(e) {
-    e.preventDefault();
-    const nameEl = document.getElementById('quickReorderItem');
-    const levelEl = document.getElementById('quickReorderLevel');
-    if (!nameEl || !levelEl) return;
-
-    const name = nameEl.value;
-    const level = parseInt(levelEl.value);
-
-    try {
-        const response = await fetch('/api/update-reorder', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, level })
-        });
-        const result = await response.json();
-        if (result.success) {
-            showNotification('Reorder level updated successfully', 'success');
-            closeReorderModal();
-            loadInventory();
-            loadDashboard();
-            const lowStockPage = document.getElementById('lowStockItems');
-            if (lowStockPage && lowStockPage.classList.contains('active')) {
-                loadLowStockItems();
-            }
-        } else {
-            showNotification(result.error, 'error');
-        }
-    } catch (error) {
-        console.error('Error:', error);
-        showNotification('Error updating reorder level', 'error');
-    }
-}
+// All handlers consolidated at the top of the file to prevent duplicates
 
 async function handleExpenseSubmit(e) {
     e.preventDefault();

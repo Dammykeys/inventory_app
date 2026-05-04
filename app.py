@@ -10,6 +10,8 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 from dotenv import load_dotenv
+from decimal import Decimal
+from flask.json.provider import DefaultJSONProvider
 
 load_dotenv()
 
@@ -21,6 +23,16 @@ if db_url and db_url.startswith("postgres://"):
 
 app.config['DATABASE_URL'] = db_url
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+
+class CustomJSONProvider(DefaultJSONProvider):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        if isinstance(obj, (datetime.date, datetime.datetime)):
+            return obj.isoformat()
+        return super().default(obj)
+
+app.json = CustomJSONProvider(app)
 
 # Initialize Connection Pool Safely
 db_pool = None
@@ -553,14 +565,21 @@ def update_reorder():
     data = request.json
     name = data.get('name', '').strip()
     level = data.get('level')
+    cost_price = data.get('cost_price')
+    selling_price = data.get('selling_price')
     
-    if not name or not isinstance(level, int) or level < 0:
-        return jsonify({'success': False, 'error': 'Invalid input'}), 400
+    if not name or not isinstance(level, (int, float)) or level < 0:
+        return jsonify({'success': False, 'error': 'Invalid reorder level'}), 400
     
     conn = get_db_connection()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute("UPDATE products SET reorder_level=%s WHERE name=%s", (level, name))
+        # Update all three fields
+        cursor.execute("""
+            UPDATE products 
+            SET reorder_level=%s, cost_price=%s, selling_price=%s 
+            WHERE name=%s
+        """, (level, cost_price, selling_price, name))
         conn.commit()
         return jsonify({'success': True})
     except Exception as e:
@@ -1551,7 +1570,7 @@ def get_customers():
         cursor.execute("SELECT * FROM customers ORDER BY name ASC")
         customers = cursor.fetchall()
         for cust in customers:
-            if cust['created_at']:
+            if cust['created_at'] and hasattr(cust['created_at'], 'strftime'):
                 cust['created_at'] = cust['created_at'].strftime('%Y-%m-%d %H:%M:%S')
         return jsonify(customers)
     except Exception as e:
