@@ -54,12 +54,18 @@
                     <i class="fas fa-address-book"></i>
                     <span>Customers</span>
                 </a>
+                <a href="#" class="nav-item" data-page="cashier">
+                    <i class="fas fa-cash-register"></i>
+                    <span>Cashier</span>
+                </a>
                 <a href="#" class="nav-item admin-only" data-page="admin" style="display: none;">
                     <i class="fas fa-users-cog"></i>
                     <span>Admin Panel</span>
                 </a>
             </nav>
         </aside>
+        <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
 
         <!-- Main Content -->
         <main class="main-content">
@@ -493,10 +499,20 @@
                             <div class="form-group">
                                 <label for="paymentStatus">Payment Status</label>
                                 <select id="paymentStatus">
-                                    <option value="Credit">Credit</option>
                                     <option value="Paid">Paid</option>
+                                    <option value="Credit">Credit</option>
                                     <option value="Pending">Pending</option>
                                     <option value="Partial">Partial</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group" id="paymentMethodGroup">
+                                <label for="paymentMethod">Payment Method (If Paid)</label>
+                                <select id="paymentMethod">
+                                    <option value="Cash">Cash</option>
+                                    <option value="Moniepoint POS">Moniepoint POS (Card)</option>
+                                    <option value="Moniepoint Transfer">Moniepoint Transfer</option>
+                                    <option value="Other">Other</option>
                                 </select>
                             </div>
 
@@ -783,6 +799,61 @@
         </div>
     </div>
 
+    <!-- Shift Management Modals -->
+    <div id="openShiftModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="document.getElementById('openShiftModal').classList.remove('show')">&times;</span>
+            <div class="modal-icon"><i class="fas fa-cash-register"></i></div>
+            <h2>Open Register Shift</h2>
+            <p>Enter the starting cash amount in your drawer.</p>
+            <form id="openShiftForm">
+                <div class="form-group" style="text-align: left;">
+                    <label>Opening Cash Balance (₦)</label>
+                    <input type="number" id="openingBalance" required min="0" step="0.01" placeholder="e.g. 5000">
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">Start Shift</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="closeShiftModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="document.getElementById('closeShiftModal').classList.remove('show')">&times;</span>
+            <div class="modal-icon" style="background: #fee2e2; color: #f43f5e;"><i class="fas fa-lock"></i></div>
+            <h2>Close Register Shift</h2>
+            <p>Enter the actual cash currently in your drawer.</p>
+            <form id="closeShiftForm">
+                <div class="form-group" style="text-align: left;">
+                    <label>Expected System Cash (₦)</label>
+                    <input type="text" id="expectedClosingBalance" readonly disabled>
+                </div>
+                <div class="form-group" style="text-align: left; margin-top: 1rem;">
+                    <label>Actual Cash Counted (₦)</label>
+                    <input type="number" id="actualClosingBalance" required min="0" step="0.01" placeholder="e.g. 15000">
+                </div>
+                <button type="submit" class="btn btn-danger" style="width: 100%; margin-top: 1rem;">End Shift</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Match Payment Modal -->
+    <div id="matchPaymentModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="document.getElementById('matchPaymentModal').classList.remove('show')">&times;</span>
+            <div class="modal-icon" style="background: #e0e7ff; color: #4f46e5;"><i class="fas fa-link"></i></div>
+            <h2>Match Pending Payment</h2>
+            <p>Link this incoming bank transfer to a specific sale or customer.</p>
+            <form id="matchPaymentForm">
+                <input type="hidden" id="matchPaymentId">
+                <div class="form-group" style="text-align: left; margin-top: 1rem;">
+                    <label>Sale Number or Customer Name</label>
+                    <input type="text" id="matchSaleCustomer" required placeholder="e.g. SALE-2026... or John Doe">
+                </div>
+                <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">Link Payment</button>
+            </form>
+        </div>
+    </div>
+
     <!-- Sale Details Modal -->
     <div id="saleDetailsModal" class="modal">
         <div class="modal-content" style="max-width: 650px; text-align: left;">
@@ -901,6 +972,59 @@
         </section>
 
         <!-- Admin Page -->
+        <!-- Cashier & Finance Page -->
+        <section id="cashier" class="page">
+            <div class="page-header">
+                <h2>Cashier & Finance</h2>
+                <div class="header-actions">
+                    <button id="openShiftBtn" class="btn btn-primary" onclick="openShiftModal()"><i class="fas fa-door-open"></i> Open Shift</button>
+                    <button id="closeShiftBtn" class="btn btn-danger" onclick="closeShiftModal()" style="display: none;"><i class="fas fa-door-closed"></i> Close Shift</button>
+                </div>
+            </div>
+
+            <!-- Shift Status Card -->
+            <div class="card" style="margin-bottom: 2rem;">
+                <h3>Current Shift Status</h3>
+                <div id="shiftStatusDisplay" style="margin-top: 1rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+                    <div class="stat-card">
+                        <p>Status</p>
+                        <h4 id="shiftState" style="color: var(--danger-color);">Closed</h4>
+                    </div>
+                    <div class="stat-card">
+                        <p>Cashier</p>
+                        <h4 id="shiftCashier">-</h4>
+                    </div>
+                    <div class="stat-card">
+                        <p>Opening Balance</p>
+                        <h4 id="shiftOpening">₦0.00</h4>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Payments Ledger -->
+            <div class="card">
+                <h3>Payment Ledger</h3>
+                <div class="table-container" style="margin-top: 1rem;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Ref / Sale #</th>
+                                <th>Customer</th>
+                                <th>Amount</th>
+                                <th>Method</th>
+                                <th>Date & Time</th>
+                                <th>Cashier</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="paymentLedgerTable">
+                            <!-- Populated via JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
         <section id="admin" class="page">
         <div class="page-header">
             <h2>User Management</h2>

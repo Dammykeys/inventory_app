@@ -79,6 +79,7 @@ body {
     font-size: 1.5rem;
     font-weight: 700;
     margin-bottom: 2.5rem;
+    flex-shrink: 0;
     color: #fff;
     font-family: 'Poppins', sans-serif;
     white-space: nowrap;
@@ -108,6 +109,34 @@ body {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 4px;
+    margin-right: -4px;
+}
+
+/* Stealth scrollbar for sidebar */
+.nav-menu::-webkit-scrollbar {
+    width: 4px;
+}
+
+.nav-menu::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.nav-menu::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+}
+
+.nav-menu:hover::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.nav-menu {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
 }
 
 .nav-item {
@@ -1194,6 +1223,26 @@ tbody tr:hover {
 
     .sidebar.active {
         left: 0;
+    }
+
+    .sidebar-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(15, 23, 42, 0.4);
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
+        z-index: 1050;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+
+    .sidebar.active ~ .sidebar-overlay {
+        display: block;
+        opacity: 1;
     }
 
     .sidebar-toggle {

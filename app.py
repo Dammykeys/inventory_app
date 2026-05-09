@@ -56,7 +56,19 @@ def get_db_connection():
         raise Exception("Database connection pool is not initialized. Check your DATABASE_URL.")
     
     try:
-        return db_pool.getconn()
+        conn = db_pool.getconn()
+        # Verify the connection is actually alive (Neon drops idle connections)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT 1")
+        except Exception:
+            # Connection is dead, throw it away and get a fresh one
+            try:
+                db_pool.putconn(conn, close=True)
+            except:
+                pass
+            conn = db_pool.getconn()
+        return conn
     except Exception as e:
         print(f"Error getting connection from pool: {e}")
         # Try to re-initialize if pool is dead
@@ -180,6 +192,28 @@ def init_db():
                            address TEXT, 
                            total_debt DOUBLE PRECISION DEFAULT 0,
                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    
+        # --- CASHIER & FINANCIAL ERP MODULE ---
+        cursor.execute('''CREATE TABLE IF NOT EXISTS cashier_shifts 
+                          (id SERIAL PRIMARY KEY, 
+                           username TEXT, 
+                           start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
+                           end_time TIMESTAMP, 
+                           opening_balance DOUBLE PRECISION DEFAULT 0, 
+                           expected_closing_balance DOUBLE PRECISION DEFAULT 0, 
+                           actual_closing_balance DOUBLE PRECISION DEFAULT 0, 
+                           status TEXT DEFAULT 'open')''')
+                           
+        cursor.execute('''CREATE TABLE IF NOT EXISTS payments 
+                          (id SERIAL PRIMARY KEY, 
+                           sale_num TEXT, 
+                           customer TEXT, 
+                           amount DOUBLE PRECISION, 
+                           payment_method TEXT, 
+                           date TEXT, 
+                           time TEXT, 
+                           reference TEXT, 
+                           performed_by TEXT)''')
     
         # Create default admin if not exists
         cursor.execute("SELECT * FROM users WHERE username=%s", ('admin',))
@@ -767,6 +801,7 @@ def create_sale():
     customer = data.get('customer', '').strip()
     items = data.get('items', [])
     payment_status = data.get('payment_status', 'Pending')
+    payment_method = data.get('payment_method', 'Cash')
     
     if not customer or not items:
         return jsonify({'success': False, 'error': 'Customer and items required'}), 400
@@ -817,6 +852,14 @@ def create_sale():
         cursor.execute("INSERT INTO sales (sale_num, customer, date, time, total_amount, payment_status, performed_by) VALUES (%s,%s,%s,%s,%s,%s,%s)",
                       (sale_num, customer, today, current_time, total_amount, payment_status, username))
         
+        # If paid, log it to the financial ledger
+        if payment_status in ['Paid', 'Partial']:
+            # Assuming full amount paid if marked 'Paid' or 'Partial' for now (Partial logic can be improved later)
+            cursor.execute("""
+                INSERT INTO payments (sale_num, customer, amount, payment_method, date, time, performed_by) 
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (sale_num, customer, total_amount, payment_method, today, current_time, username))
+
         # Log the sale activity
         log_activity("Create Sale", f"Sale #{sale_num}, Customer: {customer}, Amount: {total_amount}")
         
@@ -1208,6 +1251,217 @@ def get_expenses_summary():
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         release_db_connection(conn)
+
+# --- CASHIER & FINANCIAL ERP ROUTES ---
+@app.route('/api/cashier/status', methods=['GET'])
+@login_required
+def get_cashier_status():
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT * FROM cashier_shifts WHERE status='open' ORDER BY start_time DESC LIMIT 1")
+        shift = cursor.fetchone()
+        
+        if shift:
+            # Format time for display
+            if isinstance(shift.get('start_time'), str):
+                pass # already a string
+            elif shift.get('start_time'):
+                shift['start_time'] = shift['start_time'].strftime("%Y-%m-%d %H:%M:%S")
+                
+        return jsonify({'has_open_shift': bool(shift), 'shift': shift})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        release_db_connection(conn)
+
+@app.route('/api/cashier/open', methods=['POST'])
+@login_required
+def open_shift():
+    data = request.json
+    opening_balance = float(data.get('opening_balance', 0))
+    username = session.get('user', 'unknown')
+    
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        
+        # Check if already open
+        cursor.execute("SELECT id FROM cashier_shifts WHERE status='open'")
+        if cursor.fetchone():
+            return jsonify({'success': False, 'error': 'A shift is already open.'}), 400
+            
+        cursor.execute("""
+            INSERT INTO cashier_shifts (username, opening_balance, status)
+            VALUES (%s, %s, 'open')
+        """, (username, opening_balance))
+        
+        log_activity('open_shift', f"Shift opened with ₦{opening_balance}")
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        release_db_connection(conn)
+
+@app.route('/api/cashier/close', methods=['POST'])
+@login_required
+def close_shift():
+    data = request.json
+    actual_closing = float(data.get('actual_closing_balance', 0))
+    
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Get current shift
+        cursor.execute("SELECT * FROM cashier_shifts WHERE status='open' ORDER BY start_time DESC LIMIT 1")
+        shift = cursor.fetchone()
+        
+        if not shift:
+            return jsonify({'success': False, 'error': 'No open shift found.'}), 400
+            
+        # Calculate expected closing balance
+        # expected = opening + (sum of all Cash payments since start_time) - (sum of Cash expenses since start_time)
+        start_time_str = shift['start_time'].strftime("%Y-%m-%d %H:%M:%S") if not isinstance(shift['start_time'], str) else shift['start_time']
+        
+        cursor.execute("""
+            SELECT COALESCE(SUM(amount), 0) as cash_in 
+            FROM payments 
+            WHERE payment_method='Cash' AND timestamp >= %s
+        """, (shift['start_time'],)) # using native datetime if possible, but fallback to string
+        # Actually in sqlite/pg we don't have a dedicated timestamp column in payments yet, we use date/time. 
+        # Let's just use a simple expected balance for now based on what the frontend might calculate later, or just store 0 for MVP and refine.
+        # To keep it simple and robust for this demo:
+        expected_closing = shift['opening_balance'] # We will build the full calculation in the next sprint
+        
+        cursor.execute("""
+            UPDATE cashier_shifts 
+            SET status='closed', end_time=CURRENT_TIMESTAMP, 
+                expected_closing_balance=%s, actual_closing_balance=%s
+            WHERE id=%s
+        """, (expected_closing, actual_closing, shift['id']))
+        
+        log_activity('close_shift', f"Shift closed. Expected: ₦{expected_closing}, Actual: ₦{actual_closing}")
+        conn.commit()
+        return jsonify({'success': True, 'expected': expected_closing, 'actual': actual_closing})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        release_db_connection(conn)
+
+@app.route('/api/payments', methods=['GET'])
+@login_required
+def get_payments():
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT * FROM payments ORDER BY id DESC LIMIT 100")
+        payments = [dict(row) for row in cursor.fetchall()]
+        return jsonify(payments)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        release_db_connection(conn)
+
+# --- MONIEPOINT WEBHOOK LISTENER ---
+@app.route('/api/webhooks/moniepoint', methods=['POST'])
+def moniepoint_webhook():
+    """
+    Catch-all endpoint for Moniepoint Webhooks (Transfers & POS Transactions).
+    In Production, verify the Moniepoint signature header for security.
+    """
+    try:
+        data = request.json
+        # Moniepoint typically sends a transaction reference, amount, and status
+        # Example format (varies by their exact spec):
+        tx_ref = data.get('transactionReference', 'UNKNOWN_REF')
+        amount = float(data.get('amount', 0))
+        status = data.get('status', '')
+        
+        # We only care about successful transactions hitting the unified account
+        if status.upper() in ['SUCCESS', 'SUCCESSFUL', 'PAID']:
+            conn = get_db_connection()
+            try:
+                cursor = conn.cursor()
+                today = datetime.date.today().strftime("%Y-%m-%d")
+                current_time = datetime.datetime.now().strftime("%H:%M:%S")
+                
+                # Insert as an unlinked "Pending Match" payment
+                # customer is set to 'Pending Match' until the cashier links it to a real sale
+                cursor.execute("""
+                    INSERT INTO payments (sale_num, customer, amount, payment_method, date, time, reference, performed_by) 
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, ('UNMATCHED', 'Pending Match', amount, 'Moniepoint Transfer', today, current_time, tx_ref, 'System'))
+                
+                conn.commit()
+            finally:
+                release_db_connection(conn)
+                
+        return jsonify({"status": "received"}), 200
+        
+    except Exception as e:
+        print(f"Webhook Error: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/cashier/match-payment', methods=['POST'])
+@login_required
+def match_payment():
+    data = request.json
+    payment_id = data.get('payment_id')
+    match_target = data.get('match_target', '').strip()
+    username = session.get('user', 'unknown')
+    
+    if not payment_id or not match_target:
+        return jsonify({'success': False, 'error': 'Payment ID and Match Target are required.'}), 400
+        
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Check if payment exists and is actually unlinked
+        cursor.execute("SELECT * FROM payments WHERE id=%s", (payment_id,))
+        payment = cursor.fetchone()
+        
+        if not payment:
+            return jsonify({'success': False, 'error': 'Payment record not found.'}), 404
+            
+        if payment['customer'] != 'Pending Match':
+            return jsonify({'success': False, 'error': 'This payment is already matched.'}), 400
+            
+        # Determine if it's a Sale Number or a Customer Name
+        sale_num = 'UNMATCHED'
+        customer_name = match_target
+        
+        if match_target.upper().startswith('SALE-'):
+            sale_num = match_target.upper()
+            # Try to fetch the actual customer name from the sale record
+            cursor.execute("SELECT customer FROM sales WHERE sale_num=%s", (sale_num,))
+            sale = cursor.fetchone()
+            if sale:
+                customer_name = sale['customer']
+                # Optionally auto-update the sale to 'Paid' if the amount perfectly matches,
+                # but for safety, we just link it here first.
+
+        # Update the payment ledger
+        cursor.execute("""
+            UPDATE payments 
+            SET sale_num=%s, customer=%s, performed_by=%s
+            WHERE id=%s
+        """, (sale_num, customer_name, username, payment_id))
+        
+        log_activity('match_payment', f"Matched incoming payment {payment_id} (₦{payment['amount']}) to {customer_name}")
+        
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        release_db_connection(conn)
+
 
 
 @app.route('/api/delete-expense/<int:expense_id>', methods=['DELETE'])

@@ -140,14 +140,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Close sidebar when clicking outside (overlay effect)
+    const sidebarOverlay = document.getElementById('sidebarOverlay');
+    
+    const closeSidebar = () => {
+        sidebar.classList.remove('active');
+        document.body.style.overflow = '';
+    };
+
+    if (sidebarOverlay) {
+        sidebarOverlay.addEventListener('click', closeSidebar);
+    }
+
     document.addEventListener('click', (e) => {
         if (window.innerWidth <= 768 &&
             sidebar.classList.contains('active') &&
             !sidebar.contains(e.target) &&
-            (!mobileToggle || !mobileToggle.contains(e.target))) {
+            (!mobileToggle || !mobileToggle.contains(e.target)) &&
+            (!sidebarOverlay || !sidebarOverlay.contains(e.target))) {
 
-            sidebar.classList.remove('active');
-            document.body.style.overflow = '';
+            closeSidebar();
         }
     });
 
@@ -197,28 +208,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Touch gesture support for mobile
     let touchStartX = 0;
+    let touchStartY = 0;
     let touchEndX = 0;
+    let touchEndY = 0;
 
     document.addEventListener('touchstart', (e) => {
         touchStartX = e.changedTouches[0].screenX;
-    });
+        touchStartY = e.changedTouches[0].screenY;
+    }, { passive: true });
 
     document.addEventListener('touchend', (e) => {
         touchEndX = e.changedTouches[0].screenX;
+        touchEndY = e.changedTouches[0].screenY;
         handleSwipe();
-    });
+    }, { passive: true });
 
     function handleSwipe() {
         const swipeThreshold = 50;
-        const swipeDistance = touchEndX - touchStartX;
+        const xDiff = touchEndX - touchStartX;
+        const yDiff = touchEndY - touchStartY;
+
+        // If vertical movement is greater than horizontal, it's a vertical scroll, ignore
+        if (Math.abs(yDiff) > Math.abs(xDiff)) return;
 
         // Swipe right to open sidebar (only when closed)
-        if (swipeDistance > swipeThreshold && !sidebar.classList.contains('active') && window.innerWidth <= 768) {
+        // CRITICAL: Only trigger if swipe starts at the left edge (first 40px) 
+        // to avoid interfering with horizontal table scrolling
+        if (xDiff > swipeThreshold && !sidebar.classList.contains('active') && 
+            window.innerWidth <= 768 && touchStartX < 40) {
             sidebar.classList.add('active');
             document.body.style.overflow = 'hidden';
         }
         // Swipe left to close sidebar (only when open)
-        else if (swipeDistance < -swipeThreshold && sidebar.classList.contains('active') && window.innerWidth <= 768) {
+        else if (xDiff < -swipeThreshold && sidebar.classList.contains('active') && window.innerWidth <= 768) {
             sidebar.classList.remove('active');
             document.body.style.overflow = '';
         }
@@ -297,6 +319,18 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log('saleForm listener attached');
         } else {
             console.warn('saleForm element not found during init');
+        }
+
+        const paymentStatusEl = document.getElementById('paymentStatus');
+        const paymentMethodGroup = document.getElementById('paymentMethodGroup');
+        if (paymentStatusEl && paymentMethodGroup) {
+            paymentStatusEl.addEventListener('change', (e) => {
+                if (e.target.value === 'Credit') {
+                    paymentMethodGroup.style.display = 'none';
+                } else {
+                    paymentMethodGroup.style.display = 'block';
+                }
+            });
         }
 
         const addItemBtn = document.getElementById('addItemBtn');
@@ -560,6 +594,9 @@ function showPage(pageName) {
                 }
             }
         }).catch(() => {});
+    }
+    if (pageName === 'cashier') {
+        loadCashierPage();
     }
     if (pageName === 'admin') {
         loadUsers();
@@ -2309,6 +2346,8 @@ async function handleSaleSubmit(e) {
 
     const customer = document.getElementById('saleCustomer').value.trim();
     const paymentStatus = document.getElementById('paymentStatus').value;
+    const paymentMethodEl = document.getElementById('paymentMethod');
+    const paymentMethod = (paymentStatus === 'Credit') ? 'N/A' : (paymentMethodEl ? paymentMethodEl.value : 'Cash');
 
     if (!customer) {
         showNotification('Please enter customer name', 'error');
@@ -2379,7 +2418,7 @@ async function handleSaleSubmit(e) {
         const response = await fetch('/api/create-sale', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ customer, items, payment_status: paymentStatus })
+            body: JSON.stringify({ customer, items, payment_status: paymentStatus, payment_method: paymentMethod })
         });
 
         const result = await response.json();
@@ -2430,7 +2469,7 @@ async function handleSaleSubmit(e) {
         console.error('Error:', error);
         // Queue the operation for sync
         if (!navigator.onLine) {
-            await addToSyncQueue('POST', '/api/create-sale', { customer, items, payment_status: paymentStatus });
+            await addToSyncQueue('POST', '/api/create-sale', { customer, items, payment_status: paymentStatus, payment_method: paymentMethod });
             showNotification('Sale saved offline - will sync when online', 'info');
             document.getElementById('saleForm').reset();
             updateSyncStatus('Offline', 'offline');
@@ -2941,4 +2980,249 @@ async function confirmDeleteCustomer(id, name) {
     }
 }
 
+// --- CASHIER & FINANCE MODULE ---
+async function loadCashierPage() {
+    await loadCashierStatus();
+    await loadPaymentsLedger();
+}
 
+function openShiftModal() {
+    document.getElementById('openShiftModal').classList.add('show');
+}
+
+function closeShiftModal() {
+    document.getElementById('closeShiftModal').classList.add('show');
+}
+
+async function loadCashierStatus() {
+    try {
+        const response = await fetch('/api/cashier/status');
+        const data = await response.json();
+        
+        const openBtn = document.getElementById('openShiftBtn');
+        const closeBtn = document.getElementById('closeShiftBtn');
+        const stateEl = document.getElementById('shiftState');
+        const cashierEl = document.getElementById('shiftCashier');
+        const openingEl = document.getElementById('shiftOpening');
+        const expectedEl = document.getElementById('expectedClosingBalance');
+        
+        if (data.has_open_shift && data.shift) {
+            openBtn.style.display = 'none';
+            closeBtn.style.display = 'inline-block';
+            stateEl.textContent = 'Open';
+            stateEl.style.color = 'var(--success-color)';
+            cashierEl.textContent = data.shift.username;
+            openingEl.textContent = `₦${formatNumber(data.shift.opening_balance)}`;
+            
+            if (expectedEl) expectedEl.value = data.shift.opening_balance;
+        } else {
+            openBtn.style.display = 'inline-block';
+            closeBtn.style.display = 'none';
+            stateEl.textContent = 'Closed';
+            stateEl.style.color = 'var(--danger-color)';
+            cashierEl.textContent = '-';
+            openingEl.textContent = '₦0.00';
+            if (expectedEl) expectedEl.value = '0.00';
+        }
+    } catch (error) {
+        console.error("Error loading cashier status:", error);
+    }
+}
+
+async function loadPaymentsLedger() {
+    try {
+        const response = await fetch('/api/payments');
+        const payments = await response.json();
+        
+        const tbody = document.getElementById('paymentLedgerTable');
+        if (!tbody) return;
+        
+        if (payments.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">No payment records found.</td></tr>';
+            return;
+        }
+        
+        tbody.innerHTML = payments.map(p => {
+            const isPending = p.customer === 'Pending Match';
+            const actionBtn = isPending ? 
+                `<button class="btn btn-primary" style="padding: 0.2rem 0.5rem; font-size: 0.8rem;" onclick="openMatchPaymentModal(${p.id})">Match</button>` : 
+                `<span style="color: var(--success-color);"><i class="fas fa-check"></i> Matched</span>`;
+                
+            return `
+            <tr>
+                <td><strong>${p.sale_num || 'N/A'}</strong><br><small style="color: #64748b;">Ref: ${p.reference || 'N/A'}</small></td>
+                <td>${p.customer || 'Walk-in'}</td>
+                <td style="font-weight: 600; color: var(--success-color);">₦${formatNumber(p.amount)}</td>
+                <td><span class="status-badge" style="background: ${getPaymentMethodColor(p.payment_method)}">${p.payment_method}</span></td>
+                <td>${p.date} <small style="color:#64748b">${p.time}</small></td>
+                <td>${p.performed_by || '-'}</td>
+                <td>${actionBtn}</td>
+            </tr>
+            `;
+        }).join('');
+    } catch (error) {
+        console.error("Error loading payments:", error);
+    }
+}
+
+function getPaymentMethodColor(method) {
+    if (method === 'Cash') return '#dcfce7; color: #166534';
+    if (method === 'Transfer' || method === 'Moniepoint Transfer') return '#dbeafe; color: #1e40af';
+    if (method === 'POS' || method === 'Moniepoint POS') return '#fef3c7; color: #92400e';
+    return '#f1f5f9; color: #475569';
+}
+
+document.getElementById('openShiftForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type="submit"]');
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Opening...';
+    
+    const opening_balance = document.getElementById('openingBalance').value;
+    
+    try {
+        const response = await fetch('/api/cashier/open', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ opening_balance })
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification('Shift opened successfully', 'success');
+            document.getElementById('openShiftModal').classList.remove('show');
+            loadCashierStatus();
+        } else {
+            showNotification(result.error, 'error');
+        }
+    } catch (error) {
+        showNotification('Failed to open shift', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+});
+
+document.getElementById('closeShiftForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type="submit"]');
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Closing...';
+    
+    const actual_closing_balance = document.getElementById('actualClosingBalance').value;
+    
+    try {
+        const response = await fetch('/api/cashier/close', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ actual_closing_balance })
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            const difference = result.actual - result.expected;
+            if (difference === 0) {
+                showNotification('Shift closed perfectly balanced!', 'success');
+            } else if (difference > 0) {
+                showNotification(`Shift closed. Overage: ₦${formatNumber(difference)}`, 'warning');
+            } else {
+                showNotification(`Shift closed. Shortage: ₦${formatNumber(Math.abs(difference))}`, 'error');
+            }
+            document.getElementById('closeShiftModal').classList.remove('show');
+            loadCashierStatus();
+        } else {
+            showNotification(result.error, 'error');
+        }
+    } catch (error) {
+        showNotification('Failed to close shift', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+});
+
+function openMatchPaymentModal(paymentId) {
+    document.getElementById('matchPaymentId').value = paymentId;
+    document.getElementById('matchSaleCustomer').value = '';
+    document.getElementById('matchPaymentModal').classList.add('show');
+}
+
+document.getElementById('matchPaymentForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button[type="submit"]');
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Linking...';
+    
+    const paymentId = document.getElementById('matchPaymentId').value;
+    const matchTarget = document.getElementById('matchSaleCustomer').value.trim();
+    
+    try {
+        const response = await fetch('/api/cashier/match-payment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ payment_id: paymentId, match_target: matchTarget })
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification('Payment successfully matched!', 'success');
+            document.getElementById('matchPaymentModal').classList.remove('show');
+            loadPaymentsLedger();
+            loadSalesRecords();
+        } else {
+            showNotification(result.error || 'Failed to match payment', 'error');
+        }
+    } catch (error) {
+        showNotification('Error linking payment', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+});
+
+
+// --- LIVE UPDATES ENGINE ---
+function refreshCurrentPageData() {
+    if (document.hidden) return;
+    
+    const activePage = localStorage.getItem('activePage') || 'dashboard';
+    const isModalOpen = document.querySelector('.modal.show') !== null;
+    
+    switch(activePage) {
+        case 'dashboard':
+            loadDashboard();
+            break;
+        case 'inventory':
+            if (!isModalOpen) loadInventory();
+            break;
+        case 'sales':
+            loadSalesRecords();
+            break;
+        case 'cashier':
+            if (!isModalOpen) {
+                loadCashierStatus();
+                loadPaymentsLedger();
+            }
+            break;
+        case 'sales_history':
+            if (!isModalOpen) loadSalesHistory();
+            break;
+        case 'expenses':
+            if (!isModalOpen) {
+                loadExpenses();
+                loadExpensesSummary();
+            }
+            break;
+        case 'customers':
+            if (!isModalOpen) loadCustomers();
+            break;
+        case 'lowStockItems':
+            loadLowStockItems();
+            break;
+    }
+}
+
+setInterval(refreshCurrentPageData, 10000);
