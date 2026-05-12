@@ -593,6 +593,77 @@ def add_entry():
     finally:
         release_db_connection(conn)
 
+@app.route('/api/adjust-stock', methods=['POST'])
+@login_required
+def adjust_stock():
+    data = request.json
+    name = data.get('name', '').strip()
+    adj_type = data.get('type') # Addition or Subtraction
+    qty = data.get('quantity')
+    reason = data.get('reason')
+    notes = data.get('notes', '')
+    
+    if not name or not adj_type or not qty or not reason:
+        return jsonify({'success': False, 'error': 'All fields are required'}), 400
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Get current product state
+        cursor.execute("SELECT * FROM products WHERE name = %s", (name,))
+        product = cursor.fetchone()
+        
+        if not product:
+            return jsonify({'success': False, 'error': 'Product not found'}), 404
+            
+        current_qty = product['quantity']
+        adj_qty = int(qty)
+        
+        # Calculate new quantity and signed log quantity
+        if adj_type == 'Subtraction':
+            new_qty = current_qty - adj_qty
+            log_qty = -adj_qty
+        else:
+            new_qty = current_qty + adj_qty
+            log_qty = adj_qty
+            
+        if new_qty < 0:
+             return jsonify({'success': False, 'error': 'Insufficient stock for this adjustment'}), 400
+             
+        # Update product quantity
+        cursor.execute("UPDATE products SET quantity = %s WHERE id = %s", (new_qty, product['id']))
+        
+        # Prepare transaction log
+        log_type = f"Adjustment ({reason})"
+        now = datetime.datetime.now()
+        date_str = now.strftime('%Y-%m-%d')
+        time_str = now.strftime('%H:%M:%S')
+        username = session.get('username', 'System')
+        
+        # Record the adjustment in transactions
+        cursor.execute("""
+            INSERT INTO transactions (date, time, item_name, quantity, type, performed_by)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (date_str, time_str, name, log_qty, log_type, username))
+        
+        # Log the system activity
+        log_activity(f"Stock Adjusted", f"Item: {name}, Change: {log_qty}, Reason: {reason}")
+        
+        conn.commit()
+        return jsonify({
+            'success': True, 
+            'message': 'Stock adjusted successfully!',
+            'new_quantity': new_qty
+        })
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            release_db_connection(conn)
+
 @app.route('/api/update-reorder', methods=['POST'])
 @login_required
 def update_reorder():

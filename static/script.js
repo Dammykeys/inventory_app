@@ -399,6 +399,119 @@ document.addEventListener('DOMContentLoaded', () => {
         const updateStatusForm = document.getElementById('updateStatusForm');
         if (updateStatusForm) updateStatusForm.addEventListener('submit', handleUpdateStatusSubmit);
 
+        // --- STOCK ADJUSTMENT INITIALIZATION ---
+        const adjustmentForm = document.getElementById('adjustmentForm');
+        if (adjustmentForm) {
+            const adjustItemInput = document.getElementById('adjustItemName');
+            const adjustType = document.getElementById('adjustType');
+            const adjustQuantity = document.getElementById('adjustQuantity');
+            const adjustReason = document.getElementById('adjustReason');
+            const adjustNotesGroup = document.getElementById('adjustNotesGroup');
+            const adjustCurrentStockEl = document.getElementById('adjustCurrentStock');
+            const adjustNewStockEl = document.getElementById('adjustNewStock');
+
+            let currentAdjustItemData = null;
+
+            // Autocomplete for adjustment search
+            new Autocomplete(adjustItemInput, async () => {
+                const inventory = await fetchInventory();
+                return inventory.map(p => p.name);
+            });
+
+            // Track selected item to show current stock
+            adjustItemInput.addEventListener('change', async () => {
+                const itemName = adjustItemInput.value.trim();
+                const inventory = await fetchInventory();
+                const product = inventory.find(p => p.name.toLowerCase() === itemName.toLowerCase());
+                
+                if (product) {
+                    currentAdjustItemData = product;
+                    adjustCurrentStockEl.textContent = product.quantity;
+                    updateAdjustmentPreview();
+                } else {
+                    currentAdjustItemData = null;
+                    adjustCurrentStockEl.textContent = '-';
+                    adjustNewStockEl.textContent = '-';
+                }
+            });
+
+            // Update preview on any relevant input
+            [adjustType, adjustQuantity].forEach(el => {
+                el.addEventListener('input', updateAdjustmentPreview);
+            });
+
+            function updateAdjustmentPreview() {
+                if (!currentAdjustItemData) return;
+                const qty = parseInt(adjustQuantity.value) || 0;
+                const current = currentAdjustItemData.quantity;
+                let result = current;
+                
+                if (adjustType.value === 'Addition') {
+                    result = current + qty;
+                } else {
+                    result = current - qty;
+                }
+                
+                adjustNewStockEl.textContent = result;
+                adjustNewStockEl.style.color = result < 0 ? 'var(--danger)' : 'var(--accent)';
+            }
+
+            // Show/hide notes for "Other" reason
+            adjustReason.addEventListener('change', () => {
+                if (adjustReason.value === 'Other') {
+                    adjustNotesGroup.style.display = 'block';
+                } else {
+                    adjustNotesGroup.style.display = 'none';
+                }
+            });
+
+            // Handle Form Submission
+            adjustmentForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                
+                const data = {
+                    name: adjustItemInput.value.trim(),
+                    type: adjustType.value,
+                    quantity: parseInt(adjustQuantity.value),
+                    reason: adjustReason.value,
+                    notes: document.getElementById('adjustNotes').value
+                };
+
+                if (!data.name || isNaN(data.quantity) || data.quantity <= 0 || !data.reason) {
+                    showNotification('Please fill all required fields correctly', 'error');
+                    return;
+                }
+
+                try {
+                    const response = await fetch('/api/adjust-stock', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                    
+                    const result = await response.json();
+                    if (result.success) {
+                        showNotification(result.message, 'success');
+                        adjustmentForm.reset();
+                        adjustCurrentStockEl.textContent = '-';
+                        adjustNewStockEl.textContent = '-';
+                        adjustNewStockEl.style.color = '';
+                        adjustNotesGroup.style.display = 'none';
+                        currentAdjustItemData = null;
+                        
+                        // Refresh data across the app
+                        if (typeof refreshCurrentPageData === 'function') refreshCurrentPageData();
+                    } else {
+                        showNotification(result.error || 'Adjustment failed', 'error');
+                    }
+                } catch (err) {
+                    showNotification('Connection error. Please try again.', 'error');
+                    console.error('Adjustment Error:', err);
+                }
+            });
+        }
+
+
         const filterSalesRecordsBtn = document.getElementById('filterSalesRecordsBtn');
         if (filterSalesRecordsBtn) {
             filterSalesRecordsBtn.addEventListener('click', () => {

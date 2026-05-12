@@ -30,6 +30,10 @@
                     <i class="fas fa-plus-circle"></i>
                     <span>New Entry</span>
                 </a>
+                <a href="#" class="nav-item" data-page="stock_adjustment">
+                    <i class="fas fa-tools"></i>
+                    <span>Stock Adjustment</span>
+                </a>
                 <a href="#" class="nav-item" data-page="stock_log">
                     <i class="fas fa-exchange-alt"></i>
                     <span>Stock Log</span>
@@ -412,6 +416,74 @@
                     </div>
                 </div>
             </section>
+
+            <!-- Stock Adjustment Page -->
+            <section id="stock_adjustment" class="page">
+                <div class="page-header">
+                    <h2>Inventory Adjustment</h2>
+                </div>
+                <div class="form-container">
+                    <div class="card">
+                        <h3>Manual Adjustment</h3>
+                        <p class="text-muted" style="margin-bottom: 20px;">Use this to correct stock levels due to damage, loss, or counting errors.</p>
+                        <form id="adjustmentForm">
+                            <div class="form-group">
+                                <label for="adjustItemName">Select Item <span class="required">*</span></label>
+                                <input type="text" id="adjustItemName" placeholder="Search item..." required>
+                            </div>
+                            
+                            <div class="stats-grid" style="grid-template-columns: 1fr 1fr; margin-bottom: 20px;">
+                                <div class="stat-card" style="padding: 15px;">
+                                    <h4 style="font-size: 0.8rem; color: var(--text-muted);">Current Stock</h4>
+                                    <p id="adjustCurrentStock" style="font-size: 1.25rem; font-weight: 700;">-</p>
+                                </div>
+                                <div class="stat-card" style="padding: 15px;">
+                                    <h4 style="font-size: 0.8rem; color: var(--text-muted);">After Adjustment</h4>
+                                    <p id="adjustNewStock" style="font-size: 1.25rem; font-weight: 700;">-</p>
+                                </div>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="adjustType">Adjustment Type <span class="required">*</span></label>
+                                    <select id="adjustType" required>
+                                        <option value="Addition">Addition (+)</option>
+                                        <option value="Subtraction">Subtraction (-)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="adjustQuantity">Adjustment Quantity <span class="required">*</span></label>
+                                    <input type="number" id="adjustQuantity" placeholder="Quantity" min="1" required>
+                                </div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="adjustReason">Reason for Adjustment <span class="required">*</span></label>
+                                <select id="adjustReason" required>
+                                    <option value="">Select a reason...</option>
+                                    <option value="Damage">Damage / Spoilt</option>
+                                    <option value="Loss">Loss / Missing</option>
+                                    <option value="Correction">Counting Correction</option>
+                                    <option value="Return">Customer Return</option>
+                                    <option value="Gift">Promotional Gift</option>
+                                    <option value="Expired">Expired</option>
+                                    <option value="Other">Other</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group" id="adjustNotesGroup" style="display: none;">
+                                <label for="adjustNotes">Adjustment Notes</label>
+                                <textarea id="adjustNotes" rows="2" placeholder="Provide more details..."></textarea>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-check-double"></i> Confirm Adjustment
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </section>
+
 
             <!-- Stock Log Page -->
             <section id="stock_log" class="page">
