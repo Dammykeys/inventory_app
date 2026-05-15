@@ -123,18 +123,182 @@ class Autocomplete {
     }
 }
 
+
+// ============================================================
+// OFFLINE SYNC & CACHING (IndexedDB)
+// ============================================================
+const DB_NAME = 'InventoryAppDB';
+const DB_VERSION = 5;
+
+function initIndexedDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            // Drop and recreate stores to ensure clean schema without keyPaths
+            ['inventory', 'sales', 'customers', 'expenses', 'syncQueue'].forEach(store => {
+                if (db.objectStoreNames.contains(store)) {
+                    db.deleteObjectStore(store);
+                }
+            });
+            
+            ['inventory', 'sales', 'customers', 'expenses'].forEach(store => {
+                db.createObjectStore(store);
+            });
+            db.createObjectStore('syncQueue', { autoIncrement: true });
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+async function saveToIndexedDB(storeName, data) {
+    try {
+        const db = await initIndexedDB();
+        const tx = db.transaction(storeName, 'readwrite');
+        tx.objectStore(storeName).put(data, 'latest');
+    } catch (err) { console.error('Cache Save Error:', err); }
+}
+
+async function getFromIndexedDB(storeName) {
+    try {
+        const db = await initIndexedDB();
+        const tx = db.transaction(storeName, 'readonly');
+        const request = tx.objectStore(storeName).get('latest');
+        return new Promise(resolve => {
+            request.onsuccess = () => resolve(request.result || []);
+        });
+    } catch (err) { return []; }
+}
+
+async function addToSyncQueue(method, url, data) {
+    try {
+        const db = await initIndexedDB();
+        const tx = db.transaction('syncQueue', 'readwrite');
+        tx.objectStore('syncQueue').add({ method, url, data, timestamp: new Date().getTime() });
+        updateSyncStatus('Offline - Pending Sync', 'warning');
+    } catch (err) { console.error('Sync Queue Error:', err); }
+}
+
+async function syncData() {
+    if (!navigator.onLine) return;
+    
+    try {
+        const db = await initIndexedDB();
+        const tx = db.transaction('syncQueue', 'readwrite');
+        const store = tx.objectStore('syncQueue');
+        const request = store.getAll();
+
+        request.onsuccess = () => {
+            const items = request.result;
+            if (items.length === 0) {
+                updateSyncStatus('Online', 'success');
+                return;
+            }
+
+            const keysRequest = store.getAllKeys();
+            keysRequest.onsuccess = async () => {
+                const keys = keysRequest.result;
+                updateSyncStatus(`Syncing ${items.length} items...`, 'info');
+
+                for (let i = 0; i < items.length; i++) {
+                    const item = items[i];
+                    try {
+                        const response = await fetch(item.url, {
+                            method: item.method,
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(item.data)
+                        });
+                        if (response.ok) {
+                            const deleteTx = db.transaction('syncQueue', 'readwrite');
+                            deleteTx.objectStore('syncQueue').delete(keys[i]);
+                        }
+                    } catch (err) { break; }
+                }
+                updateSyncStatus('Sync Complete', 'success');
+            };
+        };
+    } catch (err) { console.error('Sync Execution Error:', err); }
+}
+
+function updateSyncStatus(message, type) {
+    const statusEl = document.getElementById('syncStatus');
+    if (statusEl) {
+        statusEl.textContent = message;
+        statusEl.className = `status-badge ${type}`;
+    }
+}
+
+window.addEventListener('online', syncData);
+window.addEventListener('offline', () => updateSyncStatus('Offline Mode', 'offline'));
+
+// --- NAVBAR & PROFILE INITIALIZATION ---
+async function initializeNavbar() {
+    try {
+        // Set current date immediately
+        const dateEl = document.getElementById('dateTime');
+        if (dateEl) {
+            const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+            dateEl.textContent = new Date().toLocaleDateString(undefined, options);
+        }
+
+        // Load user profile
+        const response = await fetch('/api/current-user');
+        const data = await response.json();
+        if (data.success) {
+            const user = data.user;
+            const userNameEl = document.getElementById('currentUser');
+            const userAvatarEl = document.getElementById('userAvatar');
+            
+            if (userNameEl) userNameEl.textContent = user.full_name || user.username;
+            if (userAvatarEl) userAvatarEl.textContent = (user.full_name || user.username || 'U').charAt(0).toUpperCase();
+
+            // Show admin links if user is IT or Admin
+            if (user.role && (user.role.toLowerCase() === 'it' || user.role.toLowerCase() === 'admin')) {
+                document.querySelectorAll('.admin-only').forEach(el => {
+                    if (el.tagName === 'A') el.style.display = 'flex';
+                    else el.style.display = 'block';
+                });
+            }
+        }
+    } catch (err) {
+        console.error('Error initializing navbar profile:', err);
+    }
+}
+
 // Enhanced Mobile Responsiveness
-document.addEventListener('DOMContentLoaded', () => {
+function initializeApp() {
+    console.log('--- Inventory App Initialization Started ---');
+    initializeNavbar();
+    syncData();
+
+    // --- LOGOUT INITIALIZATION (Moved to top for priority) ---
+    const logoutBtn = document.getElementById('logoutBtn');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            confirmAction('Are you sure you want to log out?', async () => {
+                try {
+                    const response = await fetch('/api/logout', { method: 'POST' });
+                    const data = await response.json();
+                    if (data.success) window.location.href = '/login';
+                    else window.location.href = '/login'; // Fallback
+                } catch (error) {
+                    console.error('Logout error:', error);
+                    window.location.href = '/login';
+                }
+            }, 'Yes, Log Out', 'Cancel');
+        });
+    }
+
     const mobileToggle = document.getElementById('mobileToggle');
     const sidebar = document.querySelector('.sidebar');
-    // const closeSidebar = document.getElementById('closeSidebar'); // Removed as sidebar closes on outside click
     const mainContent = document.querySelector('.main-content');
 
     // Mobile sidebar toggle functionality
     if (mobileToggle) {
         mobileToggle.addEventListener('click', () => {
             sidebar.classList.add('active');
-            // Prevent body scroll when sidebar is open
             document.body.style.overflow = 'hidden';
         });
     }
@@ -224,23 +388,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }, { passive: true });
 
     function handleSwipe() {
-        const swipeThreshold = 50;
         const xDiff = touchEndX - touchStartX;
         const yDiff = touchEndY - touchStartY;
+        const swipeThreshold = 50;
 
-        // If vertical movement is greater than horizontal, it's a vertical scroll, ignore
-        if (Math.abs(yDiff) > Math.abs(xDiff)) return;
-
-        // Swipe right to open sidebar (only when closed)
-        // CRITICAL: Only trigger if swipe starts at the left edge (first 40px) 
-        // to avoid interfering with horizontal table scrolling
-        if (xDiff > swipeThreshold && !sidebar.classList.contains('active') && 
+        // Swipe right to open sidebar (only from near edge)
+        if (xDiff > swipeThreshold && Math.abs(xDiff) > Math.abs(yDiff) && 
             window.innerWidth <= 768 && touchStartX < 40) {
             sidebar.classList.add('active');
             document.body.style.overflow = 'hidden';
         }
         // Swipe left to close sidebar (only when open)
-        else if (xDiff < -swipeThreshold && sidebar.classList.contains('active') && window.innerWidth <= 768) {
+        else if (xDiff < -swipeThreshold && Math.abs(xDiff) > Math.abs(yDiff) && sidebar.classList.contains('active') && window.innerWidth <= 768) {
             sidebar.classList.remove('active');
             document.body.style.overflow = '';
         }
@@ -336,8 +495,26 @@ document.addEventListener('DOMContentLoaded', () => {
         const addItemBtn = document.getElementById('addItemBtn');
         if (addItemBtn) {
             addItemBtn.addEventListener('click', addNewSaleRow);
-            console.log('addItemBtn listener attached');
         }
+
+        // --- OTHER FORM LISTENERS ---
+        document.getElementById('entryForm')?.addEventListener('submit', handleEntrySubmit);
+        document.getElementById('updateStatusForm')?.addEventListener('submit', handleUpdateStatusSubmit);
+        document.getElementById('adjustmentForm')?.addEventListener('submit', handleAdjustmentSubmit);
+        document.getElementById('reorderForm')?.addEventListener('submit', handleReorderSubmit);
+        document.getElementById('quickReorderForm')?.addEventListener('submit', handleQuickReorderSubmit);
+        document.getElementById('expenseForm')?.addEventListener('submit', handleExpenseSubmit);
+        document.getElementById('customerForm')?.addEventListener('submit', handleCustomerSubmit);
+
+        // --- ADMIN LISTENERS ---
+        document.getElementById('addUserForm')?.addEventListener('submit', handleAddUserSubmit);
+        document.getElementById('editUserForm')?.addEventListener('submit', handleEditUserSubmit);
+        document.getElementById('adminResetPasswordForm')?.addEventListener('submit', handleAdminResetPasswordSubmit);
+
+        // --- CASHIER LISTENERS ---
+        document.getElementById('openShiftForm')?.addEventListener('submit', handleOpenShiftSubmit);
+        document.getElementById('closeShiftForm')?.addEventListener('submit', handleCloseShiftSubmit);
+        document.getElementById('matchPaymentForm')?.addEventListener('submit', handleMatchPaymentSubmit);
 
         // Initialize existing rows
         document.querySelectorAll('.sale-item-row').forEach(row => {
@@ -372,8 +549,6 @@ document.addEventListener('DOMContentLoaded', () => {
                             if (brandEl) brandEl.value = item.brand || '';
                             if (costEl) costEl.value = item.cost_price || 0;
                             if (sellingEl) sellingEl.value = item.selling_price || 0;
-                            
-
                         }
                     } catch (err) {
                         console.error('Error auto-filling entry form:', err);
@@ -413,32 +588,42 @@ document.addEventListener('DOMContentLoaded', () => {
             let currentAdjustItemData = null;
 
             // Autocomplete for adjustment search
-            new Autocomplete(adjustItemInput, async () => {
-                const inventory = await fetchInventory();
-                return inventory.map(p => p.name);
-            });
+            if (adjustItemInput) {
+                new Autocomplete(adjustItemInput, async () => {
+                    try {
+                        const response = await fetch('/api/inventory');
+                        const inventory = await response.json();
+                        return inventory.map(p => p.name);
+                    } catch (err) { return []; }
+                });
 
-            // Track selected item to show current stock
-            adjustItemInput.addEventListener('change', async () => {
-                const itemName = adjustItemInput.value.trim();
-                const inventory = await fetchInventory();
-                const product = inventory.find(p => p.name.toLowerCase() === itemName.toLowerCase());
-                
-                if (product) {
-                    currentAdjustItemData = product;
-                    adjustCurrentStockEl.textContent = product.quantity;
-                    updateAdjustmentPreview();
-                } else {
-                    currentAdjustItemData = null;
-                    adjustCurrentStockEl.textContent = '-';
-                    adjustNewStockEl.textContent = '-';
-                }
-            });
+                // Track selected item to show current stock
+                adjustItemInput.addEventListener('change', async () => {
+                    const itemName = adjustItemInput.value.trim();
+                    try {
+                        const response = await fetch('/api/inventory');
+                        const inventory = await response.json();
+                        const product = inventory.find(p => p.name.toLowerCase() === itemName.toLowerCase());
+                        
+                        if (product) {
+                            currentAdjustItemData = product;
+                            adjustCurrentStockEl.textContent = product.quantity;
+                            updateAdjustmentPreview();
+                        } else {
+                            currentAdjustItemData = null;
+                            adjustCurrentStockEl.textContent = '-';
+                            adjustNewStockEl.textContent = '-';
+                        }
+                    } catch (err) { console.error(err); }
+                });
+            }
 
             // Update preview on any relevant input
-            [adjustType, adjustQuantity].forEach(el => {
-                el.addEventListener('input', updateAdjustmentPreview);
-            });
+            if (adjustType && adjustQuantity) {
+                [adjustType, adjustQuantity].forEach(el => {
+                    el.addEventListener('input', updateAdjustmentPreview);
+                });
+            }
 
             function updateAdjustmentPreview() {
                 if (!currentAdjustItemData) return;
@@ -457,18 +642,15 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // Show/hide notes for "Other" reason
-            adjustReason.addEventListener('change', () => {
-                if (adjustReason.value === 'Other') {
-                    adjustNotesGroup.style.display = 'block';
-                } else {
-                    adjustNotesGroup.style.display = 'none';
-                }
-            });
+            if (adjustReason && adjustNotesGroup) {
+                adjustReason.addEventListener('change', () => {
+                    adjustNotesGroup.style.display = adjustReason.value === 'Other' ? 'block' : 'none';
+                });
+            }
 
             // Handle Form Submission
             adjustmentForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
-                
                 const data = {
                     name: adjustItemInput.value.trim(),
                     type: adjustType.value,
@@ -498,25 +680,19 @@ document.addEventListener('DOMContentLoaded', () => {
                         adjustNewStockEl.style.color = '';
                         adjustNotesGroup.style.display = 'none';
                         currentAdjustItemData = null;
-                        
-                        // Refresh data across the app
                         if (typeof refreshCurrentPageData === 'function') refreshCurrentPageData();
                     } else {
                         showNotification(result.error || 'Adjustment failed', 'error');
                     }
                 } catch (err) {
-                    showNotification('Connection error. Please try again.', 'error');
-                    console.error('Adjustment Error:', err);
+                    showNotification('Connection error', 'error');
                 }
             });
         }
 
-
         const filterSalesRecordsBtn = document.getElementById('filterSalesRecordsBtn');
         if (filterSalesRecordsBtn) {
-            filterSalesRecordsBtn.addEventListener('click', () => {
-                loadSalesRecords();
-            });
+            filterSalesRecordsBtn.addEventListener('click', () => loadSalesRecords());
         }
 
         const searchSalesBtn = document.getElementById('searchSalesBtn');
@@ -531,51 +707,60 @@ document.addEventListener('DOMContentLoaded', () => {
         const customerForm = document.getElementById('customerForm');
         if (customerForm) customerForm.addEventListener('submit', handleCustomerSubmit);
 
-        // Close modals when clicking on the background overlay
-    window.addEventListener('click', (e) => {
-        if (e.target.classList.contains('modal')) {
-            e.target.classList.remove('show');
-        }
-    });
+        // Close modals when clicking on overlay
+        window.addEventListener('click', (e) => {
+            if (e.target.classList.contains('modal')) e.target.classList.remove('show');
+        });
 
-    // Ctrl + F Shortcut for searching
-    window.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
-            const activePage = document.querySelector('.page.active');
-            if (activePage) {
-                const searchBox = activePage.querySelector('.search-box');
+        // Ctrl + F Shortcut
+        window.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+                const activePage = document.querySelector('.page.active');
+                const searchBox = activePage?.querySelector('.search-box');
                 if (searchBox) {
                     e.preventDefault();
                     searchBox.focus();
-                    searchBox.select(); // Highlight content
+                    searchBox.select();
                     searchBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    // Smooth visual feedback via CSS class
-                    searchBox.classList.add('highlight-trigger');
-                    setTimeout(() => {
-                        searchBox.classList.remove('highlight-trigger');
-                    }, 1000);
                 }
             }
-        }
-    });
+        });
 
-    console.log('Other forms listeners attached');
+        // Fetch initial data
+        fetch('/api/inventory').then(r => r.json()).then(products => {
+            if (Array.isArray(products)) {
+                window.inventoryItemNames = products.map(p => p.name);
+                const itemNameInput = document.getElementById('itemName');
+                const reorderItemInput = document.getElementById('reorderItem');
+                if (itemNameInput) new Autocomplete(itemNameInput, async () => window.inventoryItemNames || []);
+                if (reorderItemInput) new Autocomplete(reorderItemInput, async () => window.inventoryItemNames || []);
+            }
+        });
 
-    // Fetch initial data for autocompletes
-    fetch('/api/inventory').then(r => r.json()).then(products => {
-        if (Array.isArray(products)) {
-            window.inventoryItemNames = products.map(p => p.name);
-            // Re-initialize static autocompletes now that data is loaded
-            const itemNameInput = document.getElementById('itemName');
-            const reorderItemInput = document.getElementById('reorderItem');
-            if (itemNameInput) new Autocomplete(itemNameInput, async () => window.inventoryItemNames || []);
-            if (reorderItemInput) new Autocomplete(reorderItemInput, async () => window.inventoryItemNames || []);
-        }
-    });
-} catch (err) {
-    console.error('Error during Other Forms initialization:', err);
+        // --- ADMIN LISTENERS ---
+        document.getElementById('searchUsers')?.addEventListener('keyup', () => {
+            const searchTerm = document.getElementById('searchUsers').value.toLowerCase();
+            document.querySelectorAll('#usersTable tr').forEach(row => {
+                const text = row.textContent.toLowerCase();
+                row.style.display = text.includes(searchTerm) ? '' : 'none';
+            });
+        });
+
+        document.getElementById('addUserForm')?.addEventListener('submit', handleAddUserSubmit);
+        document.getElementById('editUserForm')?.addEventListener('submit', handleEditUserSubmit);
+        document.getElementById('adminResetPasswordForm')?.addEventListener('submit', handleAdminResetPasswordSubmit);
+
+        // --- CASHIER LISTENERS ---
+        document.getElementById('openShiftForm')?.addEventListener('submit', handleOpenShiftSubmit);
+        document.getElementById('closeShiftForm')?.addEventListener('submit', handleCloseShiftSubmit);
+        document.getElementById('matchPaymentForm')?.addEventListener('submit', handleMatchPaymentSubmit);
+
+
+
+    } catch (err) {
+        console.error('Error during forms initialization:', err);
+    }
 }
-});
 
 function renderSearchResults(sales) {
     const table = document.getElementById('salesRecordsTable');
@@ -613,11 +798,81 @@ function renderSearchResults(sales) {
     }
 }
 
-// Stub for reorder form submit handler
-function handleReorderSubmit(event) {
+// Reorder level update (Inventory Page)
+async function handleReorderSubmit(event) {
     event.preventDefault();
-    console.warn('handleReorderSubmit is not yet implemented.');
-    // TODO: Implement reorder logic here
+    const name = document.getElementById('reorderItem').value.trim();
+    const level = parseInt(document.getElementById('reorderLevel').value);
+
+    if (!name || isNaN(level)) {
+        showNotification('Please fill in all fields', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/update-reorder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, level })
+        });
+        const result = await response.json();
+        if (result.success) {
+            showNotification('Reorder level updated', 'success');
+            event.target.reset();
+            loadInventory();
+            loadDashboard();
+        } else {
+            showNotification(result.error, 'error');
+        }
+    } catch (error) {
+        showNotification('Error updating reorder level', 'error');
+    }
+}
+
+async function handleEntrySubmit(e) {
+    e.preventDefault();
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    const originalText = submitBtn.innerHTML;
+
+    const data = {
+        name: document.getElementById('itemName').value.trim(),
+        brand: document.getElementById('itemBrand').value.trim(),
+        quantity: parseInt(document.getElementById('quantity').value),
+        cost_price: parseFloat(document.getElementById('costPrice').value) || 0,
+        selling_price: parseFloat(document.getElementById('sellingPrice').value) || 0,
+        type: document.getElementById('entryType').value
+    };
+
+    if (!data.name || isNaN(data.quantity)) {
+        showNotification('Item name and quantity are required', 'error');
+        return;
+    }
+
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting...';
+
+    try {
+        const response = await fetch('/api/add-entry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await response.json();
+
+        if (result.success) {
+            showNotification('Entry recorded successfully', 'success');
+            e.target.reset();
+            loadInventory();
+            loadDashboard();
+        } else {
+            showNotification(result.error || 'Failed to record entry', 'error');
+        }
+    } catch (error) {
+        showNotification('Connection error', 'error');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalText;
+    }
 }
 
 // Page Navigation
@@ -670,10 +925,9 @@ function initializeNavigation() {
 
 initializeNavigation();
 
-// Dashboard date filter
-document.getElementById('dashboardDateFilter').addEventListener('change', () => {
-    loadDashboard();
-});
+    document.getElementById('dashboardDateFilter')?.addEventListener('change', () => {
+        loadDashboard();
+    });
 
 function showPage(pageName) {
     document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
@@ -714,7 +968,7 @@ function showPage(pageName) {
     if (pageName === 'admin') {
         loadUsers();
         loadActivityLog();
-    }
+    }    
     if (pageName === 'expenses') {
         loadExpenses();
         loadExpensesSummary();
@@ -725,153 +979,60 @@ function showPage(pageName) {
     if (pageName === 'customers') {
         loadCustomers();
     }
-}
-
-// Full Low Stock Items
-async function loadLowStockItems() {
-    const table = document.getElementById('fullLowStockTable');
-    table.innerHTML = '<tr><td colspan="7" style="text-align:center;"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>';
-
-    try {
-        const response = await fetch('/api/low-stock');
-        const data = await response.json();
-
-        if (data.success) {
-            table.innerHTML = data.products.map((item, index) => {
-                const deficit = item.reorder_level - item.quantity;
-                return `
-                    <tr class="low-stock-row">
-                        <td>${index + 1}</td>
-                        <td><strong>${item.name}</strong></td>
-                        <td>${item.brand || '-'}</td>
-                        <td><span class="status-badge danger">${item.quantity}</span></td>
-                        <td>₦${formatCurrency(item.cost_price || 0)}</td>
-                        <td>₦${formatCurrency(item.selling_price || 0)}</td>
-                        <td>${item.reorder_level}</td>
-                        <td><span style="color: var(--danger); font-weight: 600;">${deficit}</span></td>
-                        <td>
-                            <div class="action-buttons">
-                                <button class="action-btn edit" onclick="openReorderModal('${item.name}', ${item.reorder_level})">Update Level</button>
-                                <button class="action-btn success" onclick="showPage('entry'); document.getElementById('itemName').value='${item.name}';">Restock</button>
-                            </div>
-                        </td>
-                    </tr>
-                `;
-            }).join('');
-
-            if (data.products.length === 0) {
-                table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No low stock items found. All good!</td></tr>';
-            }
-        } else {
-            throw new Error(data.error);
-        }
-    } catch (error) {
-        console.error('Error loading low stock items:', error);
-        table.innerHTML = `<tr><td colspan="7" style="text-align:center; color: var(--danger);">Error: ${error.message}</td></tr>`;
+    if (pageName === 'invoice') {
+        loadInvoices();
     }
 }
+// ============================================================
+// CORE UTILITIES
+// ============================================================
 
-let isLowStockFiltered = false;
-function toggleLowStockFilter() {
-    isLowStockFiltered = !isLowStockFiltered;
-    const btnText = document.getElementById('lowStockFilterText');
-    const rows = document.querySelectorAll('#inventoryTable tr');
-
-    if (isLowStockFiltered) {
-        btnText.textContent = 'Show All Items';
-        rows.forEach(row => {
-            const status = row.querySelector('.status-badge');
-            if (status && !status.classList.contains('danger')) {
-                row.style.display = 'none';
-            } else {
-                row.style.display = '';
-            }
-        });
-    } else {
-        btnText.textContent = 'Show Only Low Stock';
-        rows.forEach(row => row.style.display = '');
-    }
-}
-
-// Update Date/Time
-function updateDateTime() {
-    const now = new Date();
-    const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' };
-    document.getElementById('dateTime').textContent = now.toLocaleDateString('en-US', options);
-}
-updateDateTime();
-setInterval(updateDateTime, 60000);
-
-function setButtonLoading(button, isLoading) {
-    if (!button) return;
-    if (isLoading) {
-        button.disabled = true;
-        button.dataset.originalContent = button.innerHTML;
-        button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
-        button.style.opacity = '0.7';
-        button.style.cursor = 'not-allowed';
-    } else {
-        button.disabled = false;
-        if (button.dataset.originalContent) {
-            button.innerHTML = button.dataset.originalContent;
-        }
-        button.style.opacity = '1';
-        button.style.cursor = 'pointer';
-    }
-}
-
-
-/**
- * Formats a number with comma separators and 2 decimal places.
- * Example: 1250000 -> 1,250,000.00
- */
 function formatCurrency(amount) {
-    if (amount === undefined || amount === null || isNaN(amount)) return '0.00';
+    if (amount === undefined || amount === null) return '0.00';
     return parseFloat(amount).toLocaleString('en-NG', {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2
     });
 }
 
-// Notification System (Now using Beautiful Modals)
-function showNotification(message, type = 'success') {
-    // Determine title based on type
-    let title = 'Notification';
-    if (type === 'success') title = 'Success';
-    if (type === 'error') title = 'Action Failed';
-    if (type === 'warning') title = 'Warning';
-    if (type === 'info') title = 'System Info';
+function showNotification(message, type = 'info') {
+    const container = document.body;
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    
+    let icon = 'fa-info-circle';
+    if (type === 'success') icon = 'fa-check-circle';
+    if (type === 'error') icon = 'fa-exclamation-circle';
+    if (type === 'warning') icon = 'fa-exclamation-triangle';
 
-    // Fallback toast for feedback without modal interruption
-
-    const notification = document.getElementById('notification');
-    if (notification) {
-        notification.textContent = message;
-        notification.className = `notification show ${type}`;
-        setTimeout(() => notification.classList.remove('show'), 4000);
-    }
+    notification.innerHTML = `
+        <i class="fas ${icon}"></i>
+        <div class="notification-content">${message}</div>
+    `;
+    
+    container.appendChild(notification);
+    
+    // Trigger animation
+    setTimeout(() => notification.classList.add('show'), 10);
+    
+    // Auto-remove
+    setTimeout(() => {
+        notification.classList.remove('show');
+        setTimeout(() => notification.remove(), 400);
+    }, 4000);
 }
 
-
-// Universal Alert Modal
 function showAlertModal(message, type = 'info', title = 'Notification') {
     const modal = document.getElementById('alertModal');
-    const icon = document.getElementById('alertModalIcon');
-    const titleEl = document.getElementById('alertModalTitle');
-    const messageEl = document.getElementById('alertModalMessage');
-
-    titleEl.textContent = title;
-    messageEl.textContent = message;
-
-    // Set icon and colors based on type
-    let iconClass = 'fa-info-circle';
-    modal.className = `modal modal-${type}`;
-
-    if (type === 'success') iconClass = 'fa-check-circle';
-    if (type === 'error') iconClass = 'fa-exclamation-circle';
-    if (type === 'warning') iconClass = 'fa-exclamation-triangle';
-
-    icon.innerHTML = `<i class="fas ${iconClass}"></i>`;
+    if (!modal) return;
+    
+    document.getElementById('alertTitle').textContent = title;
+    document.getElementById('alertMessage').textContent = message;
+    
+    // Update icon/style based on type
+    const header = modal.querySelector('.modal-header');
+    header.style.borderBottomColor = type === 'error' ? 'var(--danger)' : 'var(--primary)';
+    
     modal.classList.add('show');
 }
 
@@ -879,859 +1040,448 @@ function closeAlertModal() {
     document.getElementById('alertModal').classList.remove('show');
 }
 
-// Override native alert
-window.alert = function (message) {
-    showAlertModal(message, 'info', 'System Message');
-};
+// ============================================================
+// DASHBOARD & INVENTORY DATA LOADING
+// ============================================================
 
-// Override native confirm (Async version needed for logic, so we use a custom one below)
-
-
-// ==================== OFFLINE FUNCTIONALITY ====================
-// IndexedDB Setup
-const DB_NAME = 'InventoryAppDB';
-const DB_VERSION = 3;
-let db;
-
-// Initialize IndexedDB
-async function initIndexedDB() {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-            db = request.result;
-            resolve(db);
-        };
-
-        request.onupgradeneeded = (event) => {
-            db = event.target.result;
-
-            // Create object stores for different data types
-            if (!db.objectStoreNames.contains('inventory')) {
-                db.createObjectStore('inventory', { keyPath: 'id' });
-            }
-            if (!db.objectStoreNames.contains('sales')) {
-                db.createObjectStore('sales', { keyPath: 'id' });
-            }
-            if (!db.objectStoreNames.contains('expenses')) {
-                db.createObjectStore('expenses', { keyPath: 'id' });
-            }
-            if (!db.objectStoreNames.contains('transactions')) {
-                db.createObjectStore('transactions', { keyPath: 'id' });
-            }
-            if (!db.objectStoreNames.contains('dashboard')) {
-                db.createObjectStore('dashboard', { keyPath: 'id' });
-            }
-            if (!db.objectStoreNames.contains('customers')) {
-                db.createObjectStore('customers', { keyPath: 'id' });
-            }
-            if (!db.objectStoreNames.contains('syncQueue')) {
-                db.createObjectStore('syncQueue', { keyPath: 'id', autoIncrement: true });
-            }
-        };
-    });
-}
-
-// Save data to IndexedDB
-async function saveToIndexedDB(storeName, data) {
-    if (!db) return;
-
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([storeName], 'readwrite');
-        const store = transaction.objectStore(storeName);
-
-        if (Array.isArray(data)) {
-            data.forEach(item => store.put(item));
-        } else {
-            store.put(data);
-        }
-
-        transaction.oncomplete = () => resolve();
-        transaction.onerror = () => reject(transaction.error);
-    });
-}
-
-// Get data from IndexedDB
-async function getFromIndexedDB(storeName) {
-    if (!db) return [];
-
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction([storeName], 'readonly');
-        const store = transaction.objectStore(storeName);
-        const request = store.getAll();
-
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
-}
-
-// Add operation to sync queue
-async function addToSyncQueue(method, endpoint, data) {
-    if (!db) return;
-
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['syncQueue'], 'readwrite');
-        const store = transaction.objectStore('syncQueue');
-
-        store.add({
-            method,
-            endpoint,
-            data,
-            timestamp: new Date().getTime(),
-            synced: false
-        });
-
-        transaction.oncomplete = () => resolve();
-        transaction.onerror = () => reject(transaction.error);
-    });
-}
-
-// Get all pending sync operations
-async function getPendingSyncOperations() {
-    if (!db) return [];
-
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['syncQueue'], 'readonly');
-        const store = transaction.objectStore('syncQueue');
-        const request = store.getAll();
-
-        request.onsuccess = () => {
-            const pending = request.result.filter(op => !op.synced);
-            resolve(pending);
-        };
-        request.onerror = () => reject(request.error);
-    });
-}
-
-// Mark operation as synced
-async function markAsSynced(id) {
-    if (!db) return;
-
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['syncQueue'], 'readwrite');
-        const store = transaction.objectStore('syncQueue');
-        const getRequest = store.get(id);
-
-        getRequest.onsuccess = () => {
-            const operation = getRequest.result;
-            if (operation) {
-                operation.synced = true;
-                store.put(operation);
-            }
-        };
-
-        transaction.oncomplete = () => resolve();
-        transaction.onerror = () => reject(transaction.error);
-    });
-}
-
-// Sync pending operations when online
-async function syncOfflineChanges() {
-    const pending = await getPendingSyncOperations();
-
-    if (pending.length === 0) return;
-
-    updateSyncStatus(`Syncing ${pending.length} changes...`, 'syncing');
-
-    // Batch size for parallel requests
-    const BATCH_SIZE = 5;
-    for (let i = 0; i < pending.length; i += BATCH_SIZE) {
-        const batch = pending.slice(i, i + BATCH_SIZE);
-        await Promise.all(batch.map(async (operation) => {
-            try {
-                const response = await fetch(operation.endpoint, {
-                    method: operation.method,
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(operation.data)
-                });
-                if (response.ok) {
-                    await markAsSynced(operation.id);
-                    console.log(`Synced: ${operation.method} ${operation.endpoint}`);
-                }
-            } catch (error) {
-                console.error(`Failed to sync: ${operation.method} ${operation.endpoint}`, error);
-            }
-        }));
-    }
-
-    updateSyncStatus('', 'synced');
-    loadDashboard();
-    loadInventory();
-    loadSalesHistory();
-    loadExpenses();
-}
-
-// Update sync status display
-function updateSyncStatus(message, status) {
-    const statusElement = document.getElementById('syncStatus');
-    if (!statusElement) return;
-
-    if (status === 'offline') {
-        statusElement.innerHTML = '<span class="status-badge offline"><i class="fas fa-cloud-slash"></i> Offline</span>';
-        statusElement.title = 'Working offline - changes will be synced when connection restored';
-    } else if (status === 'syncing') {
-        statusElement.innerHTML = '<span class="status-badge syncing"><i class="fas fa-sync-alt"></i> ' + message + '</span>';
-    } else if (status === 'synced') {
-        statusElement.innerHTML = '<span class="status-badge online"><i class="fas fa-cloud-check"></i> Online</span>';
-        statusElement.title = 'All changes synced';
-    } else {
-        statusElement.innerHTML = '';
-    }
-}
-
-// Monitor online/offline status
-window.addEventListener('online', async () => {
-    console.log('Connection restored');
-    updateSyncStatus('Syncing...', 'syncing');
-    await syncOfflineChanges();
-});
-
-window.addEventListener('offline', () => {
-    console.log('Connection lost');
-    updateSyncStatus('Offline', 'offline');
-});
-
-// Check initial online status
-if (!navigator.onLine) {
-    updateSyncStatus('Offline', 'offline');
-}
-
-// Initialize IndexedDB on page load
-initIndexedDB().catch(error => console.error('Failed to initialize IndexedDB:', error));
-
-
-// --- DASHBOARD ---
 async function loadDashboard() {
-    const dateFilter = document.getElementById('dashboardDateFilter').value || '';
-    const cacheKey = `dashboard_${dateFilter || 'all'}`;
-
-    // 1. Try to load from cache first for instant UI
+    const dateFilter = document.getElementById('dashboardDateFilter')?.value || '';
     try {
-        const cachedData = await getFromIndexedDB('dashboard');
-        const latestCache = cachedData.find(d => d.id === cacheKey);
-        if (latestCache) {
-            renderDashboard(
-                latestCache.data.inventory_stats,
-                latestCache.data.low_stock_products,
-                latestCache.data.transactions,
-                latestCache.data.sales_summary,
-                latestCache.data.metrics,
-                latestCache.data.recent_sales
-            );
-            console.log('Dashboard rendered from cache');
-        }
-    } catch (err) {
-        console.warn('Cache load failed:', err);
-    }
-
-    // 2. Fetch fresh data in the background
-    try {
-        const response = await fetch(`/api/dashboard-combined${dateFilter ? `?date=${dateFilter}` : ''}`);
+        const response = await fetch(`/api/dashboard-combined?date=${dateFilter}`);
         const data = await response.json();
 
         if (data.success) {
-            // Update UI with fresh data
-            renderDashboard(
-                data.inventory_stats,
-                data.low_stock_products,
-                data.transactions,
-                data.sales_summary,
-                data.metrics,
-                data.recent_sales
-            );
+            // Update stats cards
+            const stats = data.sales_summary || {};
+            if (document.getElementById('todaysSales')) document.getElementById('todaysSales').textContent = stats.total_sales || 0;
+            if (document.getElementById('totalRevenue')) document.getElementById('totalRevenue').textContent = '₦' + formatCurrency(stats.total_revenue);
+            if (document.getElementById('totalExpenses')) document.getElementById('totalExpenses').textContent = '₦' + formatCurrency(data.metrics?.total_expenses || 0);
+            if (document.getElementById('totalCredit')) document.getElementById('totalCredit').textContent = '₦' + formatCurrency(stats.credit_amount);
+            if (document.getElementById('totalPending')) document.getElementById('totalPending').textContent = '₦' + formatCurrency(stats.pending_amount);
+            if (document.getElementById('realizedPayment')) document.getElementById('realizedPayment').textContent = '₦' + formatCurrency(stats.paid_amount);
+
+            // Update inventory counts
+            const invStats = data.inventory_stats || {};
+            if (document.getElementById('totalItems')) document.getElementById('totalItems').textContent = invStats.total_items || 0;
+            if (document.getElementById('lowStock')) document.getElementById('lowStock').textContent = invStats.low_stock_count || 0;
+            if (document.getElementById('healthyStock')) document.getElementById('healthyStock').textContent = (invStats.total_items || 0) - (invStats.low_stock_count || 0);
+            if (document.getElementById('totalUnits')) document.getElementById('totalUnits').textContent = invStats.total_units || 0;
+
+            // Populate Tables
+            renderLowStockTable(data.low_stock_products || []);
+            renderRecentTransactions(data.transactions || []);
             
-            // Save to cache for next time
-            await saveToIndexedDB('dashboard', { id: cacheKey, data: data, timestamp: new Date().getTime() });
-            console.log('Dashboard updated from network and cached');
-        } else {
-            // Handle specific errors from the API
-            if (data.error === 'Authentication required') {
-                window.location.href = '/login';
-                return;
-            }
-            throw new Error(data.error || 'Failed to load dashboard data');
+            // Also load sales history for the dashboard recent sales table if it exists
+            if (typeof loadSalesHistory === 'function') loadSalesHistory();
         }
-
     } catch (error) {
-        console.error('Error loading fresh dashboard data:', error);
-        // Only show notification if we don't even have cached data to show
-        if (!cachedProducts || cachedProducts.length === 0) {
-            const errorMsg = error.message.includes('Authentication') ? 'Session expired. Please login again.' : 'Error loading dashboard data';
-            showNotification(errorMsg, 'error');
-
-            if (error.message.includes('Authentication')) {
-                setTimeout(() => window.location.href = '/login', 2000);
-            }
-        }
+        console.error('Error loading dashboard:', error);
     }
 }
 
-// Separate rendering logic for reusability
-function renderDashboard(inventoryStats, lowStockProducts, transactions, salesSummary, metrics, recentSales) {
-    // Check if we're using old products array or new stats object
-    let totalItems, lowStock, healthyStock, totalUnits;
-
-    if (inventoryStats && inventoryStats.total_items !== undefined) {
-        // Optimized path
-        totalItems = inventoryStats.total_items;
-        lowStock = inventoryStats.low_stock_count;
-        healthyStock = totalItems - lowStock;
-        totalUnits = inventoryStats.total_units;
-    } else {
-        // Fallback for cached full inventory
-        const products = Array.isArray(inventoryStats) ? inventoryStats : [];
-        totalItems = products.length;
-        lowStock = products.filter(p => p.quantity <= p.reorder_level).length;
-        healthyStock = totalItems - lowStock;
-        totalUnits = products.reduce((sum, p) => sum + p.quantity, 0);
-    }
-
-    document.getElementById('totalItems').textContent = totalItems;
-    document.getElementById('lowStock').textContent = lowStock;
-    document.getElementById('healthyStock').textContent = healthyStock;
-    document.getElementById('totalUnits').textContent = totalUnits;
-
-    // Sales stats
-    document.getElementById('todaysSales').textContent = salesSummary.total_sales || 0;
-    document.getElementById('totalRevenue').textContent = `₦${formatCurrency(metrics.total_revenue || 0)}`;
-    document.getElementById('totalExpenses').textContent = `₦${formatCurrency(metrics.total_expenses || 0)}`;
-
-    // Total credit
-    const totalCredit = salesSummary.credit_amount || 0;
-    document.getElementById('totalCredit').textContent = `₦${formatCurrency(totalCredit)}`;
-
-    // Total pending
-    const totalPending = salesSummary.pending_amount || 0;
-    document.getElementById('totalPending').textContent = `₦${formatCurrency(totalPending)}`;
-
-    // Realized payment (paid amount - expenses)
-    const paidAmount = salesSummary.paid_amount || 0;
-    const totalExpenses = metrics.total_expenses || 0;
-    const realizedPayment = paidAmount - totalExpenses;
-    const realizedPaymentElement = document.getElementById('realizedPayment');
-    realizedPaymentElement.textContent = `₦${formatCurrency(realizedPayment)}`;
-    if (realizedPayment < 0) {
-        realizedPaymentElement.style.color = 'var(--danger-color)';
-    } else {
-        realizedPaymentElement.style.color = 'var(--secondary-color)';
-    }
-
-    // Low stock items
-    const lowStockTable = document.getElementById('lowStockTable');
-    const displayItems = Array.isArray(lowStockProducts) ? lowStockProducts :
-        (Array.isArray(inventoryStats) ? inventoryStats.filter(p => p.quantity <= p.reorder_level) : []);
-
-    lowStockTable.innerHTML = displayItems.map((item, index) => `
+function renderLowStockTable(products) {
+    const table = document.getElementById('lowStockTable');
+    if (!table) return;
+    
+    table.innerHTML = products.map((p, i) => `
         <tr>
-            <td>${index + 1}</td>
-            <td>${item.name}</td>
-            <td>${item.quantity}</td>
-            <td>${item.reorder_level}</td>
-            <td><span class="status-badge danger">Low Stock</span></td>
+            <td>${i + 1}</td>
+            <td>${p.name}</td>
+            <td>${p.quantity}</td>
+            <td>${p.reorder_level}</td>
+            <td><span class="status-badge critical">Low Stock</span></td>
         </tr>
     `).join('');
-
-    if (displayItems.length === 0) {
-        lowStockTable.innerHTML = '<tr><td colspan="5" style="text-align:center; color: var(--text-secondary);">No low stock items</td></tr>';
-    }
-
-    // Recent transactions
-    const recentTx = transactions.slice(0, 5);
-    const txTable = document.getElementById('recentTransactions');
-    txTable.innerHTML = recentTx.map((tx, index) => `
-        <tr>
-            <td>${index + 1}</td>
-            <td>${tx.item_name}</td>
-            <td>${tx.quantity}</td>
-            <td><span class="status-badge ${tx.type === 'Intake' ? 'success' : 'warning'}">${tx.type}</span></td>
-            <td>${tx.time}</td>
-            <td>${tx.performed_by || '-'}</td>
-        </tr>
-    `).join('');
-
-    if (recentTx.length === 0) {
-        txTable.innerHTML = '<tr><td colspan="5" style="text-align:center; color: var(--text-secondary);">No transactions yet</td></tr>';
-    }
-
-    // Recent sales
-    const recentSalesLimited = recentSales.slice(0, 5);
-    const recentSalesTable = document.getElementById('recentSalesTable');
-    recentSalesTable.innerHTML = recentSalesLimited.map((sale, index) => {
-        const statusColor = sale.payment_status.toLowerCase();
-        return `
-            <tr onclick="showPage('sales_history')" style="cursor: pointer;" title="Click to view all records">
-                <td>${index + 1}</td>
-                <td><strong>${sale.sale_num}</strong></td>
-                <td>${sale.customer}</td>
-                <td>${sale.date}</td>
-                <td>₦${formatCurrency(sale.total_amount)}</td>
-                <td><span class="payment-status-badge ${statusColor}">${sale.payment_status}</span></td>
-                <td>${sale.performed_by || '-'}</td>
-            </tr>
-        `;
-    }).join('');
-
-    if (recentSalesLimited.length === 0) {
-        recentSalesTable.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--text-secondary);">No sales recorded</td></tr>';
+    
+    if (products.length === 0) {
+        table.innerHTML = '<tr><td colspan="5" style="text-align:center;">No low stock items</td></tr>';
     }
 }
 
+function renderRecentTransactions(transactions) {
+    const table = document.getElementById('recentTransactions');
+    if (!table) return;
+    
+    table.innerHTML = transactions.map((t, i) => `
+        <tr>
+            <td>${i + 1}</td>
+            <td>${t.item_name}</td>
+            <td>${t.quantity}</td>
+            <td><span class="status-badge ${t.type === 'Addition' ? 'healthy' : 'warning'}">${t.type}</span></td>
+            <td>${t.time}</td>
+            <td>${t.user_id}</td>
+        </tr>
+    `).join('');
+    
+    if (transactions.length === 0) {
+        table.innerHTML = '<tr><td colspan="6" style="text-align:center;">No recent transactions</td></tr>';
+    }
+}
 
-// --- INVENTORY ---
 async function loadInventory() {
-    // 1. Show cached data immediately
-    try {
-        const cachedProducts = await getFromIndexedDB('inventory');
-        if (cachedProducts && cachedProducts.length > 0) {
-            renderInventory(cachedProducts);
-            updateItemSuggestions(cachedProducts);
-            console.log('Inventory rendered from cache');
-        }
-    } catch (err) {
-        console.warn('Inventory cache load failed:', err);
-    }
-
-    // 2. Fetch fresh data in background
     try {
         const response = await fetch('/api/inventory');
         const products = await response.json();
+        
+        const table = document.getElementById('inventoryTable');
+        if (!table) return;
 
-        if (Array.isArray(products)) {
-            renderInventory(products);
-            updateItemSuggestions(products);
-            
-            // Clear and update cache
-            // Note: In a real app we might want a more sophisticated cache update
-            await saveToIndexedDB('inventory', products);
-            console.log('Inventory updated from network and cached');
+        table.innerHTML = products.map((p, i) => {
+            const isLow = p.quantity <= p.reorder_level;
+            return `
+                <tr>
+                    <td>${i + 1}</td>
+                    <td><strong>${p.name}</strong></td>
+                    <td>${p.brand || '-'}</td>
+                    <td>${p.quantity}</td>
+                    <td>₦${formatCurrency(p.cost_price)}</td>
+                    <td>₦${formatCurrency(p.selling_price)}</td>
+                    <td>${p.reorder_level}</td>
+                    <td><span class="status-badge ${isLow ? 'critical' : 'healthy'}">${isLow ? 'Low Stock' : 'Healthy'}</span></td>
+                    <td>
+                        <div class="action-buttons">
+                            <button class="action-btn edit" onclick="openEditModal('${p.id}', '${p.name.replace(/'/g, "\\'")}', '${p.brand?.replace(/'/g, "\\'") || ""}', ${p.cost_price}, ${p.selling_price}, ${p.reorder_level})">Edit</button>
+                            <button class="action-btn delete" onclick="confirmDelete(${p.id}, 'product', '${p.name.replace(/'/g, "\\'")}')">Delete</button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        if (products.length === 0) {
+            table.innerHTML = '<tr><td colspan="9" style="text-align:center;">No items in inventory</td></tr>';
         }
     } catch (error) {
         console.error('Error loading inventory:', error);
-        if (!navigator.onLine) {
-            showNotification('Offline - showing cached data', 'info');
-        } else {
-            showNotification('Error updating inventory', 'error');
-        }
     }
 }
 
-// Helper to render inventory table
-function renderInventory(products) {
-    const table = document.getElementById('inventoryTable');
+async function loadTransactions() {
+    const table = document.getElementById('stockLogTable');
     if (!table) return;
 
-    // Sort alphabetically by name
-    const sortedProducts = [...products].sort((a, b) => a.name.localeCompare(b.name));
-
-    table.innerHTML = sortedProducts.map((item, index) => {
-        const isLow = item.quantity <= item.reorder_level;
-        return `
-            <tr class="${isLow ? 'low-stock-row' : ''}">
-                <td>${index + 1}</td>
-                <td>${item.name}</td>
-                <td>${item.brand || '-'}</td>
-                <td>${item.quantity}</td>
-                <td>₦${formatCurrency(item.cost_price || 0)}</td>
-                <td>₦${formatCurrency(item.selling_price || 0)}</td>
-                <td>${item.reorder_level}</td>
-                <td>
-                    <span class="status-badge ${isLow ? 'danger' : 'healthy'}">
-                        ${isLow ? 'Low Stock' : 'Healthy'}
-                    </span>
-                </td>
-                <td>
-                    <div class="action-buttons">
-                        <button class="action-btn edit" onclick="openReorderModal('${item.name}', ${item.reorder_level}, ${item.cost_price || 0}, ${item.selling_price || 0})">Update</button>
-                    </div>
-                </td>
-            </tr>
-        `;
-    }).join('');
-
-    if (sortedProducts.length === 0) {
-        table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No items in inventory</td></tr>';
-    }
-
-    // Re-setup search listener if needed (or just use event delegation)
-    setupInventorySearch();
-}
-
-function setupInventorySearch() {
-    const searchInput = document.getElementById('searchInventory');
-    if (!searchInput) return;
-
-    // Use a fresh listener
-    searchInput.onkeyup = () => {
-        const searchTerm = searchInput.value.toLowerCase();
-        document.querySelectorAll('#inventoryTable tr').forEach(row => {
-            const text = row.textContent.toLowerCase();
-            row.style.display = text.includes(searchTerm) ? '' : 'none';
-        });
-    };
-}
-
-// Update item suggestions for forms
-function updateItemSuggestions(products) {
-    window.inventoryItemNames = products.map(p => p.name).sort((a, b) => a.localeCompare(b));
-}
-
-// Initialize autocomplete for static fields
-document.addEventListener('DOMContentLoaded', () => {
-    const itemNameInput = document.getElementById('itemName');
-    const reorderItemInput = document.getElementById('reorderItem');
-    
-    if (itemNameInput) new Autocomplete(itemNameInput, async () => window.inventoryItemNames || []);
-    if (reorderItemInput) new Autocomplete(reorderItemInput, async () => window.inventoryItemNames || []);
-});
-
-// --- NEW ENTRY FORM ---
-async function handleEntrySubmit(e) {
-    e.preventDefault();
-    console.log('Entry form submission started');
-
-    const nameEl = document.getElementById('itemName');
-    const brandEl = document.getElementById('itemBrand');
-    const quantityEl = document.getElementById('quantity');
-    const typeEl = document.getElementById('entryType');
-
-    if (!nameEl || !quantityEl || !typeEl) {
-        console.error('Entry form elements not found');
-        return;
-    }
-
-    const costPriceEl = document.getElementById('costPrice');
-    const sellingPriceEl = document.getElementById('sellingPrice');
-    const name = nameEl.value.trim();
-    const brand = brandEl ? brandEl.value.trim() : '';
-    const quantity = parseInt(quantityEl.value);
-    const cost_price = costPriceEl ? parseFloat(costPriceEl.value) || 0 : 0;
-    const selling_price = sellingPriceEl ? parseFloat(sellingPriceEl.value) || 0 : 0;
-    const type = typeEl.value;
-
-    if (!name || quantity <= 0) {
-        showNotification('Please fill in all fields correctly', 'error');
-        return;
-    }
-
-    const submitBtn = e.target.querySelector('button[type="submit"]');
-    setButtonLoading(submitBtn, true);
-
     try {
-        const response = await fetch('/api/add-entry', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, brand, quantity, cost_price, selling_price, type })
-        });
+        const response = await fetch('/api/transactions');
+        const transactions = await response.json();
 
-        const result = await response.json();
-
-        if (result.success) {
-            showNotification(result.message, 'success');
-            document.getElementById('entryForm').reset();
-            if (brandEl) brandEl.value = '';
-            loadInventory();
-            loadDashboard();
-        } else {
-            showNotification(result.error, 'error');
-        }
-    } catch (error) {
-        console.error('Error:', error);
-        // Queue the operation for sync
-        if (!navigator.onLine) {
-            await addToSyncQueue('POST', '/api/add-entry', { name, brand, quantity, cost_price, selling_price, type });
-            showNotification('Entry saved offline - will sync when online', 'info');
-            document.getElementById('entryForm').reset();
-            if (brandEl) brandEl.value = '';
-            updateSyncStatus('Offline', 'offline');
-        } else {
-            showNotification('Error recording entry', 'error');
-        }
-    } finally {
-        setButtonLoading(submitBtn, false);
-    }
-}
-
-// --- REORDER FORM ---
-document.getElementById('reorderForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-
-    const name = document.getElementById('reorderItem').value.trim();
-    const level = parseInt(document.getElementById('reorderLevel').value);
-
-    if (!name || level < 0) {
-        showNotification('Please fill in all fields correctly', 'error');
-        return;
-    }
-
-    try {
-        const response = await fetch('/api/update-reorder', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, level })
-        });
-
-        const result = await response.json();
-
-        if (result.success) {
-            showNotification('Reorder level updated', 'success');
-            document.getElementById('reorderForm').reset();
-            loadInventory();
-        } else {
-            showNotification('Error updating reorder level', 'error');
-        }
-    } catch (error) {
-        console.error('Error:', error);
-        // Queue the operation for sync
-        if (!navigator.onLine) {
-            await addToSyncQueue('POST', '/api/update-reorder', { name, level });
-            showNotification('Update saved offline - will sync when online', 'info');
-            document.getElementById('reorderForm').reset();
-            updateSyncStatus('Offline', 'offline');
-        } else {
-            showNotification('Error updating reorder level', 'error');
-        }
-        console.error('Error:', error);
-        showNotification('Error updating reorder level', 'error');
-    }
-});
-
-// --- TRANSACTIONS ---
-async function loadTransactions() {
-    const date = document.getElementById('transactionDate').value;
-    const type = document.getElementById('transactionType').value;
-
-    try {
-        const url = new URL('/api/transactions', window.location);
-        if (date) url.searchParams.append('date', date);
-        if (type !== 'All') url.searchParams.append('type', type);
-
-        const response = await fetch(url);
-        const result = await response.json();
-
-        if (!response.ok || !Array.isArray(result)) {
-            throw new Error(result.error || 'Failed to load transactions');
-        }
-
-        const transactions = result;
-        const table = document.getElementById('transactionsTable');
-        table.innerHTML = transactions.map((tx, index) => `
+        table.innerHTML = transactions.map((t, i) => `
             <tr>
-                <td>${index + 1}</td>
-                <td>${tx.date}</td>
-                <td>${tx.time}</td>
-                <td>${tx.item_name}</td>
-                <td>${tx.quantity}</td>
-                <td><span class="status-badge ${tx.type === 'Intake' ? 'success' : 'warning'}">${tx.type}</span></td>
-                <td>${tx.performed_by || '-'}</td>
+                <td>${i + 1}</td>
+                <td>${t.date}</td>
+                <td><strong>${t.item_name}</strong></td>
+                <td>${t.quantity}</td>
+                <td><span class="status-badge ${t.type === 'Addition' ? 'healthy' : 'warning'}">${t.type}</span></td>
+                <td>${t.reason || '-'}</td>
+                <td>${t.user_id}</td>
                 <td>
-                    <div class="action-buttons">
-                        <button class="action-btn delete" onclick="confirmDelete(${tx.id}, 'transaction', '${tx.item_name}')">Delete</button>
-                    </div>
+                    <button class="action-btn delete" onclick="confirmDelete(${t.id}, 'transaction', '${t.item_name}')">
+                        <i class="fas fa-trash"></i>
+                    </button>
                 </td>
             </tr>
         `).join('');
 
         if (transactions.length === 0) {
-            table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No transactions found</td></tr>';
+            table.innerHTML = '<tr><td colspan="8" style="text-align:center;">No transactions logged</td></tr>';
         }
     } catch (error) {
         console.error('Error loading transactions:', error);
-        showNotification('Error loading transactions', 'error');
     }
 }
 
-document.getElementById('filterBtn').addEventListener('click', loadTransactions);
+function openEditModal(id, name, brand, cost, selling, reorder) {
+    document.getElementById('editProductId').value = id;
+    document.getElementById('editItemName').value = name;
+    document.getElementById('editItemBrand').value = brand;
+    document.getElementById('editCostPrice').value = cost;
+    document.getElementById('editSellingPrice').value = selling;
+    document.getElementById('editReorderLevel').value = reorder;
+    document.getElementById('editInventoryModal').classList.add('show');
+}
 
-// --- INVOICE FORM ---
-document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
+async function loadLowStockItems() {
+    const table = document.getElementById('lowStockItemsTable');
+    if (!table) return;
 
-    const customer = document.getElementById('customerName').value.trim();
-    const item = document.getElementById('invoiceItem').value.trim();
-    const quantity = parseInt(document.getElementById('invoiceQuantity').value);
+    try {
+        const response = await fetch('/api/inventory');
+        const products = await response.json();
+        const lowStock = products.filter(p => p.quantity <= p.reorder_level);
 
-    if (!customer || !item || quantity <= 0) {
-        showNotification('Please fill in all fields correctly', 'error');
+        table.innerHTML = lowStock.map((p, i) => `
+            <tr>
+                <td>${i + 1}</td>
+                <td><strong>${p.name}</strong></td>
+                <td>${p.brand || '-'}</td>
+                <td><span style="color: var(--danger); font-weight: 700;">${p.quantity}</span></td>
+                <td>${p.reorder_level}</td>
+                <td>
+                    <button class="action-btn edit" onclick="showPage('inventory')">Manage</button>
+                </td>
+            </tr>
+        `).join('');
+
+        if (lowStock.length === 0) {
+            table.innerHTML = '<tr><td colspan="6" style="text-align:center;">All items are at healthy stock levels</td></tr>';
+        }
+    } catch (error) {
+        console.error('Error loading low stock items:', error);
+    }
+}
+
+
+
+
+// ============================================================
+// INVOICE MANAGEMENT
+// ============================================================
+let allInvoicesData = [];
+
+async function loadInvoices() {
+    const tbody = document.getElementById('invoiceTableBody');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>';
+
+    try {
+        const res = await fetch('/api/sales');
+        const sales = await res.json();
+        allInvoicesData = Array.isArray(sales) ? sales : [];
+
+        renderInvoiceTable(allInvoicesData);
+        updateInvoiceSummary(allInvoicesData);
+
+        // Wire up filters
+        const statusFilter = document.getElementById('invoiceStatusFilter');
+        const searchInput = document.getElementById('invoiceSearch');
+
+        if (statusFilter) {
+            statusFilter.onchange = filterInvoices;
+        }
+        if (searchInput) {
+            searchInput.oninput = filterInvoices;
+        }
+    } catch (err) {
+        console.error('Error loading invoices:', err);
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:red;">Error loading invoices</td></tr>';
+    }
+}
+
+function filterInvoices() {
+    const status = document.getElementById('invoiceStatusFilter').value;
+    const query = (document.getElementById('invoiceSearch').value || '').toLowerCase();
+
+    const filtered = allInvoicesData.filter(sale => {
+        const matchStatus = status === 'All' || (sale.payment_status || '').toLowerCase() === status.toLowerCase();
+        const matchSearch = !query ||
+            (sale.sale_num || '').toLowerCase().includes(query) ||
+            (sale.customer || '').toLowerCase().includes(query);
+        return matchStatus && matchSearch;
+    });
+
+    renderInvoiceTable(filtered);
+}
+
+function renderInvoiceTable(sales) {
+    const tbody = document.getElementById('invoiceTableBody');
+    if (!tbody) return;
+
+    if (!sales.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-muted);">No invoices found</td></tr>';
         return;
     }
 
+    tbody.innerHTML = sales.map(sale => {
+        const status = sale.payment_status || 'Paid';
+        const statusClass = 'status-' + status.toLowerCase();
+        return `
+            <tr>
+                <td>${sale.date || '-'}</td>
+                <td><strong style="color: var(--primary);">${sale.sale_num || '-'}</strong></td>
+                <td>${sale.customer || 'Walk-in'}</td>
+                <td><span class="payment-status-badge ${statusClass}" style="border-radius: 999px; padding: 4px 12px; font-size: 0.75rem; font-weight: 600;">${status}</span></td>
+                <td><strong>₦${formatCurrency(sale.total_amount || 0)}</strong></td>
+                <td>${sale.performed_by || '-'}</td>
+                <td>
+                    <div class="action-buttons">
+                        <button class="action-btn edit" onclick="printInvoice('${sale.sale_num}')">
+                            <i class="fas fa-print"></i> Print
+                        </button>
+                        <button class="action-btn" onclick="viewSaleDetails('${sale.sale_num}')" style="background: rgba(79,70,229,0.1); color: var(--primary);">
+                            <i class="fas fa-eye"></i> View
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function updateInvoiceSummary(sales) {
+    const today = new Date().toISOString().split('T')[0];
+    let totalReceivables = 0;
+    let pendingTotal = 0;
+    let paidToday = 0;
+
+    sales.forEach(sale => {
+        const amount = sale.total_amount || 0;
+        const status = (sale.payment_status || '').toLowerCase();
+
+        if (status !== 'paid') {
+            totalReceivables += amount;
+        }
+        if (status === 'pending' || status === 'credit') {
+            pendingTotal += amount;
+        }
+        if (status === 'paid' && sale.date === today) {
+            paidToday += amount;
+        }
+    });
+
+    const totalEl = document.getElementById('totalReceivables');
+    const pendingEl = document.getElementById('pendingInvoicesTotal');
+    const paidEl = document.getElementById('paidTodayTotal');
+
+    if (totalEl) totalEl.textContent = '₦' + formatCurrency(totalReceivables);
+    if (pendingEl) pendingEl.textContent = '₦' + formatCurrency(pendingTotal);
+    if (paidEl) paidEl.textContent = '₦' + formatCurrency(paidToday);
+}
+
+async function printInvoice(saleNum) {
     try {
-        const response = await fetch('/api/generate-invoice', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ customer, item, quantity })
-        });
+        const res = await fetch(`/api/sale-details/${saleNum}`);
+        const data = await res.json();
 
-        const result = await response.json();
-
-        if (result.success) {
-            showNotification(result.message, 'success');
-            document.getElementById('invoiceForm').reset();
-
-            // Download the PDF
-            const link = document.createElement('a');
-            link.href = `/download/${result.file}`;
-            link.download = result.file;
-            link.click();
-        } else {
-            showNotification(result.error, 'error');
+        if (!data.success) {
+            showNotification('Could not load invoice details', 'error');
+            return;
         }
-    } catch (error) {
-        console.error('Error:', error);
-        showNotification('Error generating invoice', 'error');
-    }
-});
 
-// --- MODAL FOR REORDER ---
-const modal = document.getElementById('reorderModal');
-const closeBtn = document.querySelector('.close');
+        const sale = data.sale;
+        const items = data.items || [];
+        const today = new Date().toLocaleDateString('en-NG', { year: 'numeric', month: 'long', day: 'numeric' });
 
-function openReorderModal(itemName, currentLevel, costPrice, sellingPrice) {
-    const itemEl = document.getElementById('quickReorderItem');
-    const levelEl = document.getElementById('quickReorderLevel');
-    const costEl = document.getElementById('quickCostPrice');
-    const sellingEl = document.getElementById('quickSellingPrice');
-    const modalEl = document.getElementById('reorderModal');
-    const displayEl = document.getElementById('quickUpdateItemDisplay');
-    
-    if (itemEl) itemEl.value = itemName;
-    if (displayEl) displayEl.textContent = itemName;
-    if (levelEl) levelEl.value = currentLevel;
-    if (costEl) costEl.value = costPrice || 0;
-    if (sellingEl) sellingEl.value = sellingPrice || 0;
-    
-    if (modalEl) modalEl.classList.add('show');
-}
+        const itemRows = items.map(item => `
+            <tr>
+                <td style="padding: 10px 16px; border-bottom: 1px solid #f0f0f0;">${item.item_name}</td>
+                <td style="padding: 10px 16px; border-bottom: 1px solid #f0f0f0; text-align: center;">${item.quantity}</td>
+                <td style="padding: 10px 16px; border-bottom: 1px solid #f0f0f0; text-align: right;">₦${formatCurrency(item.price)}</td>
+                <td style="padding: 10px 16px; border-bottom: 1px solid #f0f0f0; text-align: right; font-weight: 600;">₦${formatCurrency(item.total)}</td>
+            </tr>
+        `).join('');
 
-function closeReorderModal() {
-    const modalEl = document.getElementById('reorderModal');
-    if (modalEl) modalEl.classList.remove('show');
-}
+        const statusColor = {
+            'Paid': '#065f46', 'Credit': '#1e40af', 'Pending': '#92400e', 'Partial': '#991b1b'
+        }[sale.payment_status] || '#374151';
 
-if (closeBtn) {
-    closeBtn.addEventListener('click', closeReorderModal);
-}
+        const statusBg = {
+            'Paid': '#d1fae5', 'Credit': '#dbeafe', 'Pending': '#fef3c7', 'Partial': '#fee2e2'
+        }[sale.payment_status] || '#f3f4f6';
 
-window.addEventListener('click', (e) => {
-    if (e.target === modal) {
-        closeReorderModal();
-    }
-});
+        const invoiceHTML = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Invoice ${saleNum}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; color: #1f2937; background: #f9fafb; }
+        .invoice-wrapper { max-width: 800px; margin: 40px auto; background: white; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.10); }
+        .invoice-header { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); color: white; padding: 40px 48px; display: flex; justify-content: space-between; align-items: flex-start; }
+        .company-name { font-size: 1.8rem; font-weight: 800; letter-spacing: -0.03em; }
+        .company-sub { font-size: 0.85rem; color: rgba(255,255,255,0.6); margin-top: 4px; }
+        .invoice-title { text-align: right; }
+        .invoice-title h1 { font-size: 2rem; font-weight: 300; letter-spacing: 0.1em; color: rgba(255,255,255,0.9); }
+        .invoice-num { font-size: 0.9rem; color: #818cf8; margin-top: 6px; font-weight: 600; }
+        .invoice-body { padding: 40px 48px; }
+        .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-bottom: 2.5rem; }
+        .meta-label { font-size: 0.75rem; font-weight: 700; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+        .meta-value { font-size: 1rem; font-weight: 600; color: #111827; }
+        .meta-value.large { font-size: 1.2rem; }
+        .status-badge { display: inline-block; padding: 4px 14px; border-radius: 999px; font-size: 0.8rem; font-weight: 700; background: ${statusBg}; color: ${statusColor}; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 2rem; }
+        thead th { background: #f8fafc; padding: 12px 16px; text-align: left; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #6b7280; border-bottom: 2px solid #e5e7eb; }
+        thead th:last-child, thead th:nth-child(3), thead th:nth-child(2) { text-align: right; } 
+        thead th:nth-child(2) { text-align: center; }
+        .totals { display: flex; justify-content: flex-end; }
+        .totals-box { width: 300px; }
+        .total-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #f3f4f6; font-size: 0.9rem; color: #4b5563; }
+        .total-row.grand { font-size: 1.2rem; font-weight: 800; color: #111827; border-bottom: none; border-top: 2px solid #111827; padding-top: 12px; margin-top: 4px; }
+        .footer { background: #f8fafc; padding: 24px 48px; text-align: center; font-size: 0.85rem; color: #9ca3af; border-top: 1px solid #e5e7eb; }
+        @media print { body { background: white; } .invoice-wrapper { box-shadow: none; margin: 0; border-radius: 0; } }
+    </style>
+</head>
+<body>
+<div class="invoice-wrapper">
+    <div class="invoice-header">
+        <div>
+            <div class="company-name">Inventory Pro</div>
+            <div class="company-sub">Official Invoice</div>
+        </div>
+        <div class="invoice-title">
+            <h1>INVOICE</h1>
+            <div class="invoice-num">${sale.sale_num}</div>
+        </div>
+    </div>
+    <div class="invoice-body">
+        <div class="meta-grid">
+            <div>
+                <div class="meta-label">Bill To</div>
+                <div class="meta-value large">${sale.customer || 'Walk-in Customer'}</div>
+            </div>
+            <div style="text-align: right;">
+                <div class="meta-label">Invoice Date</div>
+                <div class="meta-value">${sale.date} ${sale.time || ''}</div>
+            </div>
+            <div>
+                <div class="meta-label">Payment Status</div>
+                <div class="meta-value"><span class="status-badge">${sale.payment_status || 'Paid'}</span></div>
+            </div>
+            <div style="text-align: right;">
+                <div class="meta-label">Served By</div>
+                <div class="meta-value">${sale.performed_by || '-'}</div>
+            </div>
+        </div>
 
-async function handleQuickReorderSubmit(e) {
-    e.preventDefault();
+        <table>
+            <thead>
+                <tr>
+                    <th>Description</th>
+                    <th>Qty</th>
+                    <th>Unit Price</th>
+                    <th>Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${itemRows}
+            </tbody>
+        </table>
 
-    const name = document.getElementById('quickReorderItem').value;
-    const level = parseFloat(document.getElementById('quickReorderLevel').value) || 0;
-    const cost_price = parseFloat(document.getElementById('quickCostPrice').value) || 0;
-    const selling_price = parseFloat(document.getElementById('quickSellingPrice').value) || 0;
+        <div class="totals">
+            <div class="totals-box">
+                <div class="total-row grand">
+                    <span>TOTAL</span>
+                    <span>₦${formatCurrency(sale.total_amount || 0)}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="footer">
+        Thank you for your business! &mdash; Generated on ${today}
+    </div>
+</div>
+<script>window.onload = function() { window.print(); }<\/script>
+</body>
+</html>`;
 
-    // Visual feedback on the submit button
-    const submitBtn = document.querySelector('#quickReorderForm button[type="submit"]');
-    const originalBtnText = submitBtn.innerHTML;
-    submitBtn.disabled = true;
-    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
-
-    try {
-        const response = await fetch('/api/update-reorder', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, level, cost_price, selling_price })
-        });
-
-        const result = await response.json();
-
-        if (result.success) {
-            submitBtn.innerHTML = '<i class="fas fa-check"></i> Saved!';
-            setTimeout(() => {
-                submitBtn.disabled = false;
-                submitBtn.innerHTML = originalBtnText;
-                showNotification('Item details updated', 'success');
-                closeReorderModal();
-                loadInventory();
-                loadDashboard();
-            }, 600);
-        } else {
-            submitBtn.disabled = false;
-            submitBtn.innerHTML = originalBtnText;
-            showNotification(result.error || 'Update failed', 'error');
-        }
-    } catch (error) {
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = originalBtnText;
-        showNotification('Error updating item details', 'error');
-    }
-}
-document.getElementById('quickReorderForm').addEventListener('submit', handleQuickReorderSubmit);
-
-// Enter key confirms the update modal
-document.getElementById('reorderModal').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-        e.preventDefault();
-        document.getElementById('quickReorderForm').requestSubmit();
-    }
-});
-
-// --- AUTHENTICATION & ADMIN ---
-let currentUserId = null;
-
-// Check login status on load
-async function checkLoginStatus() {
-    try {
-        const response = await fetch('/api/current-user');
-        const data = await response.json();
-
-        if (data.success) {
-            const user = data.user;
-            currentUserId = user.id;
-            document.getElementById('currentUser').textContent = user.username;
-
-            // Show admin links if admin
-            if (user.role === 'admin') {
-                document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
-            }
-            // Set avatar initial
-            const avatar = document.getElementById('userAvatar');
-            if (avatar && user.username) {
-                avatar.textContent = user.username.charAt(0).toUpperCase();
-            }
-        } else {
-            // Not logged in, redirect to login
-            window.location.href = '/login';
-        }
-    } catch (error) {
-        console.error('Error checking login status:', error);
-        // If offline, maybe allow access if cached? But security...
-        // For now, redirect to login on error if not offline-capable for auth
-        if (window.location.pathname !== '/login') {
-            window.location.href = '/login';
-        }
+        const win = window.open('', '_blank');
+        win.document.write(invoiceHTML);
+        win.document.close();
+    } catch (err) {
+        showNotification('Failed to generate invoice', 'error');
+        console.error('printInvoice error:', err);
     }
 }
-
-// Initial check
-if (window.location.pathname !== '/login') {
-    checkLoginStatus();
-}
-
-// Logout
-document.getElementById('logoutBtn')?.addEventListener('click', () => {
-    confirmAction('Are you sure you want to log out?', async () => {
-        try {
-            const response = await fetch('/api/logout', { method: 'POST' });
-            const data = await response.json();
-            if (data.success) {
-                window.location.href = '/login';
-            }
-        } catch (error) {
-            console.error('Logout error:', error);
-            window.location.href = '/login';
-        }
-    }, 'Yes, Log Out', 'Cancel');
-});
-
-// --- ADMIN PANEL FUNCTIONS ---
 
 async function loadUsers() {
     try {
@@ -1739,6 +1489,7 @@ async function loadUsers() {
         const data = await response.json();
 
         if (data.success) {
+            const currentUserId = data.current_user_id;
             const tbody = document.getElementById('usersTable');
             tbody.innerHTML = data.users.map((user, index) => `
                 <tr>
@@ -1792,8 +1543,9 @@ async function loadActivityLog() {
         if (data.success) {
             const tbody = document.getElementById('activityLogTable');
             if (tbody) {
-                tbody.innerHTML = data.logs.map(log => `
+                tbody.innerHTML = data.logs.map((log, index) => `
                     <tr onclick="showActivityDetails('${log.username}', '${log.action}', '${log.details.replace(/'/g, "\\'")}', '${log.timestamp}')" style="cursor: pointer;">
+                        <td>${index + 1}</td>
                         <td><strong>${log.username}</strong></td>
                         <td>${log.action}</td>
                         <td><small>${log.details || '-'}</small></td>
@@ -1813,13 +1565,7 @@ function showActivityDetails(user, action, details, time) {
 }
 
 // User Search
-document.getElementById('searchUsers')?.addEventListener('keyup', () => {
-    const searchTerm = document.getElementById('searchUsers').value.toLowerCase();
-    document.querySelectorAll('#usersTable tr').forEach(row => {
-        const text = row.textContent.toLowerCase();
-        row.style.display = text.includes(searchTerm) ? '' : 'none';
-    });
-});
+
 
 // Add User Modal
 const addUserModal = document.getElementById('addUserModal');
@@ -1831,7 +1577,7 @@ function closeAddUserModal() {
     document.getElementById('addUserForm').reset();
 }
 
-document.getElementById('addUserForm')?.addEventListener('submit', async (e) => {
+async function handleAddUserSubmit(e) {
     e.preventDefault();
 
     const username = document.getElementById('newUsername').value.trim();
@@ -1860,7 +1606,7 @@ document.getElementById('addUserForm')?.addEventListener('submit', async (e) => 
         console.error('Error creating user:', error);
         showNotification('Error creating user', 'error');
     }
-});
+}
 
 async function toggleUserActive(userId) {
     confirmAction('Change user status?', async () => {
@@ -1938,7 +1684,7 @@ function closeEditUserModal() {
     document.getElementById('editUserForm').reset();
 }
 
-document.getElementById('editUserForm')?.addEventListener('submit', async (e) => {
+async function handleEditUserSubmit(e) {
     e.preventDefault();
     const id = document.getElementById('editUserId').value;
     const fullName = document.getElementById('editFullName').value.trim();
@@ -1963,7 +1709,7 @@ document.getElementById('editUserForm')?.addEventListener('submit', async (e) =>
         console.error('Error updating user:', error);
         showNotification('Error updating user', 'error');
     }
-});
+}
 
 // Admin Reset Password Modal
 const adminResetPasswordModal = document.getElementById('adminResetPasswordModal');
@@ -1977,7 +1723,7 @@ function closeAdminResetPasswordModal() {
     document.getElementById('adminResetPasswordForm').reset();
 }
 
-document.getElementById('adminResetPasswordForm')?.addEventListener('submit', async (e) => {
+async function handleAdminResetPasswordSubmit(e) {
     e.preventDefault();
     const id = document.getElementById('resetUserId').value;
     const newPassword = document.getElementById('resetNewPassword').value;
@@ -1999,7 +1745,7 @@ document.getElementById('adminResetPasswordForm')?.addEventListener('submit', as
         console.error('Error resetting password:', error);
         showNotification('Error resetting password', 'error');
     }
-});
+}
 
 // Hook into showPage to load users when Admin tab is clicked
 const originalShowPage = showPage;
@@ -2025,54 +1771,6 @@ document.querySelectorAll('.nav-item, .bottom-nav-item').forEach(nav => {
 
 showPage(pageToRestore);
 
-
-// --- EXPENSES FUNCTIONALITY ---
-// --- EXPENSES FUNCTIONALITY ---
-async function handleExpenseSubmit(e) {
-    if (e) e.preventDefault();
-
-    const description = document.getElementById('expenseDescription').value.trim();
-    const category = document.getElementById('expenseCategory').value;
-    const amount = parseFloat(document.getElementById('expenseAmount').value);
-    const date = document.getElementById('expenseDate').value;
-    const notes = document.getElementById('expenseNotes').value.trim();
-
-    if (!description || !category || amount <= 0 || !date) {
-        showNotification('Please fill in all required fields', 'error');
-        return;
-    }
-
-    try {
-        const response = await fetch('/api/add-expense', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ description, category, amount, date, notes })
-        });
-
-        const result = await response.json();
-
-        if (result.success) {
-            showNotification(result.message, 'success');
-            document.getElementById('expenseForm').reset();
-            loadExpenses();
-            loadExpensesSummary();
-            loadDashboard();
-        } else {
-            showNotification(result.error, 'error');
-        }
-    } catch (error) {
-        console.error('Error:', error);
-        // Queue the operation for sync
-        if (!navigator.onLine) {
-            await addToSyncQueue('POST', '/api/add-expense', { description, category, amount, date, notes });
-            showNotification('Expense saved offline - will sync when online', 'info');
-            document.getElementById('expenseForm').reset();
-            updateSyncStatus('Offline', 'offline');
-        } else {
-            showNotification('Error recording expense', 'error');
-        }
-    }
-}
 
 async function loadExpenses() {
     let dateFilter = document.getElementById('expenseDateFilter').value;
@@ -2291,11 +1989,14 @@ document.getElementById('confirmBtn').addEventListener('click', () => {
 });
 
 document.getElementById('cancelBtn').addEventListener('click', () => {
-    confirmModal.classList.remove('show');
+    const confirmModalEl = document.getElementById('confirmModal');
+    if (confirmModalEl) confirmModalEl.classList.remove('show');
     confirmCallback = null;
     // Reset button labels to defaults
-    document.getElementById('confirmBtn').textContent = 'Yes, Delete';
-    document.getElementById('cancelBtn').textContent = 'No, Keep it';
+    const confirmBtn = document.getElementById('confirmBtn');
+    const cancelBtn = document.getElementById('cancelBtn');
+    if (confirmBtn) confirmBtn.textContent = 'Yes, Delete';
+    if (cancelBtn) cancelBtn.textContent = 'No, Keep it';
 });
 
 // --- SALES PAGE FUNCTIONALITY ---
@@ -2340,7 +2041,7 @@ function addNewSaleRow() {
     }
 }
 
-document.getElementById('addItemBtn')?.addEventListener('click', addNewSaleRow);
+
 
 function removeItem(button) {
     button.closest('.sale-item-row').remove();
@@ -2595,7 +2296,7 @@ async function handleSaleSubmit(e) {
         }
     }
 }
-document.getElementById('saleForm').addEventListener('submit', handleSaleSubmit);
+
 
 async function loadSalesHistory(dateFilter = '', customerFilter = '') {
     try {
@@ -2645,20 +2346,21 @@ async function loadSalesHistory(dateFilter = '', customerFilter = '') {
         if (recentTable) {
             // Show last 8 sales in condensed view
             const recentSales = sales.slice(0, 8);
-            recentTable.innerHTML = recentSales.map(sale => {
+            recentTable.innerHTML = recentSales.map((sale, index) => {
                 const status = sale.payment_status || 'Paid';
                 const statusColor = status.toLowerCase();
                 return `
                     <tr>
+                        <td>${index + 1}</td>
                         <td><strong>${sale.sale_num}</strong></td>
                         <td>${sale.customer || 'Unknown'}</td>
                         <td>${sale.date}</td>
                         <td>₦${formatCurrency(sale.total_amount || 0)}</td>
                         <td><span class="payment-status-badge ${statusColor}">${status}</span></td>
-                        <td><button class="action-btn edit" onclick="viewSaleDetails('${sale.sale_num}')">View</button></td>
+                        <td>${sale.performed_by || '-'}</td>
                     </tr>
                 `;
-            }).join('') || '<tr><td colspan="6" style="text-align:center;">No recent sales</td></tr>';
+            }).join('') || '<tr><td colspan="7" style="text-align:center;">No recent sales</td></tr>';
         }
     } catch (error) {
         console.error('Error loading sales:', error);
@@ -2875,10 +2577,7 @@ async function handleUpdateStatusSubmit(e) {
         showNotification('Error updating status', 'error');
     }
 }
-const updateStatusForm = document.getElementById('updateStatusForm');
-if (updateStatusForm) {
-    updateStatusForm.addEventListener('submit', handleUpdateStatusSubmit);
-}
+
 
 async function quickUpdateStatus(saleNum, newStatus) {
     try {
@@ -3185,7 +2884,7 @@ function getPaymentMethodColor(method) {
     return '#f1f5f9; color: #475569';
 }
 
-document.getElementById('openShiftForm')?.addEventListener('submit', async (e) => {
+async function handleOpenShiftSubmit(e) {
     e.preventDefault();
     const btn = e.target.querySelector('button[type="submit"]');
     const originalText = btn.innerHTML;
@@ -3212,12 +2911,14 @@ document.getElementById('openShiftForm')?.addEventListener('submit', async (e) =
     } catch (error) {
         showNotification('Failed to open shift', 'error');
     } finally {
-        btn.disabled = false;
-        btn.innerHTML = originalText;
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
     }
-});
+}
 
-document.getElementById('closeShiftForm')?.addEventListener('submit', async (e) => {
+async function handleCloseShiftSubmit(e) {
     e.preventDefault();
     const btn = e.target.querySelector('button[type="submit"]');
     const originalText = btn.innerHTML;
@@ -3251,10 +2952,12 @@ document.getElementById('closeShiftForm')?.addEventListener('submit', async (e) 
     } catch (error) {
         showNotification('Failed to close shift', 'error');
     } finally {
-        btn.disabled = false;
-        btn.innerHTML = originalText;
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
     }
-});
+}
 
 function openMatchPaymentModal(paymentId) {
     document.getElementById('matchPaymentId').value = paymentId;
@@ -3262,7 +2965,7 @@ function openMatchPaymentModal(paymentId) {
     document.getElementById('matchPaymentModal').classList.add('show');
 }
 
-document.getElementById('matchPaymentForm')?.addEventListener('submit', async (e) => {
+async function handleMatchPaymentSubmit(e) {
     e.preventDefault();
     const btn = e.target.querySelector('button[type="submit"]');
     const originalText = btn.innerHTML;
@@ -3291,10 +2994,12 @@ document.getElementById('matchPaymentForm')?.addEventListener('submit', async (e
     } catch (error) {
         showNotification('Error linking payment', 'error');
     } finally {
-        btn.disabled = false;
-        btn.innerHTML = originalText;
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
     }
-});
+}
 
 
 // --- LIVE UPDATES ENGINE ---
@@ -3339,3 +3044,94 @@ function refreshCurrentPageData() {
 }
 
 setInterval(refreshCurrentPageData, 10000);
+
+async function handleQuickReorderSubmit(e) {
+    e.preventDefault();
+    const name = document.getElementById('quickReorderItem').value;
+    const level = parseInt(document.getElementById('quickReorderLevel').value);
+    const cost = parseFloat(document.getElementById('quickCostPrice').value);
+    const selling = parseFloat(document.getElementById('quickSellingPrice').value);
+
+    if (!name || isNaN(level)) {
+        showNotification('Please fill in all fields', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/update-reorder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, level, cost_price: cost, selling_price: selling })
+        });
+        const result = await response.json();
+        if (result.success) {
+            showNotification('Item details updated', 'success');
+            document.getElementById('reorderModal').classList.remove('show');
+            loadInventory();
+            loadDashboard();
+        } else {
+            showNotification(result.error, 'error');
+        }
+    } catch (error) {
+        showNotification('Error updating item', 'error');
+    }
+}
+
+async function handleAdjustmentSubmit(e) {
+    e.preventDefault();
+    const data = {
+        name: document.getElementById('adjustItemName').value.trim(),
+        type: document.getElementById('adjustType').value,
+        quantity: parseInt(document.getElementById('adjustQuantity').value),
+        reason: document.getElementById('adjustReason').value,
+        notes: document.getElementById('adjustNotes').value
+    };
+
+    if (!data.name || isNaN(data.quantity)) {
+        showNotification('Please fill in all fields', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/adjust-stock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await response.json();
+        if (result.success) {
+            showNotification('Stock adjusted successfully', 'success');
+            e.target.reset();
+            document.getElementById('adjustCurrentStock').textContent = '-';
+            document.getElementById('adjustNewStock').textContent = '-';
+            loadInventory();
+            loadDashboard();
+            loadTransactions();
+        } else {
+            showNotification(result.error, 'error');
+        }
+    } catch (error) {
+        showNotification('Error adjusting stock', 'error');
+    }
+}
+
+function openReorderModal(name, level, cost, selling) {
+    document.getElementById('quickReorderItem').value = name;
+    document.getElementById('quickUpdateItemDisplay').textContent = name;
+    document.getElementById('quickReorderLevel').value = level;
+    document.getElementById('quickCostPrice').value = cost;
+    document.getElementById('quickSellingPrice').value = selling;
+    document.getElementById('reorderModal').classList.add('show');
+}
+
+function closeReorderModal() {
+    document.getElementById('reorderModal').classList.remove('show');
+}
+
+// Safer initialization check
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeApp);
+} else {
+    initializeApp();
+}
+

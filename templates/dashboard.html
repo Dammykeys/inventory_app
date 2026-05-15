@@ -523,31 +523,82 @@
                 </div>
             </section>
 
-            <!-- Invoice Page -->
+            <!-- Invoice Management Page -->
             <section id="invoice" class="page">
                 <div class="page-header">
-                    <h2>Generate Invoice</h2>
+                    <h2>All Invoices</h2>
+                    <div class="header-actions">
+                        <button class="btn btn-primary" onclick="showPage('sales')">
+                            <i class="fas fa-plus"></i> New Invoice
+                        </button>
+                    </div>
                 </div>
-                <div class="form-container">
-                    <div class="card">
-                        <h3>Create New Invoice</h3>
-                        <form id="invoiceForm">
-                            <div class="form-group">
-                                <label for="customerName">Customer Name <span class="required">*</span></label>
-                                <input type="text" id="customerName" placeholder="Enter customer name" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="invoiceItem">Select Item <span class="required">*</span></label>
-                                <input type="text" id="invoiceItem" placeholder="Enter item name" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="invoiceQuantity">Quantity <span class="required">*</span></label>
-                                <input type="number" id="invoiceQuantity" placeholder="Enter quantity" min="1" required>
-                            </div>
-                            <button type="submit" class="btn btn-primary">
-                                <i class="fas fa-file-pdf"></i> Generate Invoice
-                            </button>
-                        </form>
+
+                <div class="invoice-summary-grid">
+                    <div class="summary-card">
+                        <div class="summary-icon" style="background: rgba(79, 70, 229, 0.1); color: var(--primary);">
+                            <i class="fas fa-file-invoice-dollar"></i>
+                        </div>
+                        <div class="summary-details">
+                            <h3>Total Receivables</h3>
+                            <p class="summary-amount" id="totalReceivables">₦0.00</p>
+                        </div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-icon" style="background: rgba(245, 158, 11, 0.1); color: var(--warning);">
+                            <i class="fas fa-clock"></i>
+                        </div>
+                        <div class="summary-details">
+                            <h3>Pending Invoices</h3>
+                            <p class="summary-amount" id="pendingInvoicesTotal">₦0.00</p>
+                        </div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-icon" style="background: rgba(16, 185, 129, 0.1); color: var(--accent);">
+                            <i class="fas fa-check-circle"></i>
+                        </div>
+                        <div class="summary-details">
+                            <h3>Paid Today</h3>
+                            <p class="summary-amount" id="paidTodayTotal">₦0.00</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="filter-bar" style="display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap; align-items: flex-end;">
+                        <div class="filter-group" style="display: flex; flex-direction: column; gap: 0.5rem; flex: 1; min-width: 200px;">
+                            <label style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted);">Status</label>
+                            <select id="invoiceStatusFilter" class="search-box" style="width: 100%;">
+                                <option value="All">All Statuses</option>
+                                <option value="Paid">Paid</option>
+                                <option value="Pending">Pending</option>
+                                <option value="Credit">Credit</option>
+                                <option value="Partial">Partial</option>
+                            </select>
+                        </div>
+                        <div class="filter-group" style="display: flex; flex-direction: column; gap: 0.5rem; flex: 2; min-width: 250px;">
+                            <label style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted);">Search</label>
+                            <input type="text" id="invoiceSearch" class="search-box" style="width: 100%;" placeholder="Invoice # or Customer name...">
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table id="invoiceTable">
+                            <thead>
+                                <tr>
+                                    <th>DATE</th>
+                                    <th>INVOICE #</th>
+                                    <th>CUSTOMER NAME</th>
+                                    <th>STATUS</th>
+                                    <th>AMOUNT</th>
+                                    <th>STAFF</th>
+                                    <th>ACTIONS</th>
+                                </tr>
+                            </thead>
+                            <tbody id="invoiceTableBody">
+                                <!-- Populated by JS -->
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </section>
@@ -1240,7 +1291,7 @@
         <i class="fas fa-plus"></i>
     </button>
 
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script src="{{ url_for('static', filename='script.js') }}?v=1.1"></script>
     <script>
         // Register Service Worker for offline functionality
         if ('serviceWorker' in navigator) {

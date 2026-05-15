@@ -38,6 +38,7 @@ app.json = CustomJSONProvider(app)
 db_pool = None
 try:
     if app.config['DATABASE_URL']:
+        print(f"Attempting to connect to database at: {app.config['DATABASE_URL'][:20]}...")
         db_pool = pool.ThreadedConnectionPool(
             1, 20, # min, max connections
             app.config['DATABASE_URL']
@@ -379,12 +380,10 @@ def get_activity_log():
         release_db_connection(conn)
 
 
-# --- ROUTES ---
-
-
 
 # --- ROUTES ---
 @app.route('/')
+@login_required
 def index():
     return render_template('dashboard.html')
 
@@ -1619,7 +1618,8 @@ def get_users():
         users = cursor.fetchall()
         return jsonify({
             'success': True,
-            'users': users
+            'users': users,
+            'current_user_id': session.get('user_id')
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
