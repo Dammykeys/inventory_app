@@ -1301,29 +1301,39 @@ function openEditModal(id, name, brand, cost, selling, reorder) {
 }
 
 async function loadLowStockItems() {
-    const table = document.getElementById('lowStockItemsTable');
+    const table = document.getElementById('fullLowStockTable');
     if (!table) return;
 
     try {
-        const response = await fetch('/api/inventory');
-        const products = await response.json();
+        // Fetch all inventory items (we might want a specific low-stock endpoint later for performance)
+        const response = await fetch('/api/inventory?per_page=1000');
+        const data = await response.json();
+        const products = data.products || [];
         const lowStock = products.filter(p => p.quantity <= p.reorder_level);
 
-        table.innerHTML = lowStock.map((p, i) => `
-            <tr>
-                <td>${i + 1}</td>
-                <td><strong>${p.name}</strong></td>
-                <td>${p.brand || '-'}</td>
-                <td><span style="color: var(--danger); font-weight: 700;">${p.quantity}</span></td>
-                <td>${p.reorder_level}</td>
-                <td>
-                    <button class="action-btn edit" onclick="showPage('inventory')">Manage</button>
-                </td>
-            </tr>
-        `).join('');
+        table.innerHTML = lowStock.map((p, i) => {
+            const deficit = Math.max(0, p.reorder_level - p.quantity);
+            return `
+                <tr>
+                    <td>${i + 1}</td>
+                    <td><strong>${p.name}</strong></td>
+                    <td>${p.brand || '-'}</td>
+                    <td><span style="color: var(--danger); font-weight: 700;">${p.quantity}</span></td>
+                    <td>₦${formatCurrency(p.cost_price)}</td>
+                    <td>₦${formatCurrency(p.selling_price)}</td>
+                    <td>${p.reorder_level}</td>
+                    <td><span class="status-badge critical">${deficit}</span></td>
+                    <td>
+                        <div class="action-buttons">
+                            <button class="action-btn edit" onclick="openEditModal('${p.id}', '${p.name.replace(/'/g, "\\'")}', '${p.brand?.replace(/'/g, "\\'") || ""}', ${p.cost_price}, ${p.selling_price}, ${p.reorder_level})">Manage</button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
 
         if (lowStock.length === 0) {
-            table.innerHTML = '<tr><td colspan="6" style="text-align:center;">All items are at healthy stock levels</td></tr>';
+            table.innerHTML = '<tr><td colspan="9" style="text-align:center;">All items are at healthy stock levels</td></tr>';
         }
     } catch (error) {
         console.error('Error loading low stock items:', error);
