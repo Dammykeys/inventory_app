@@ -784,7 +784,7 @@ function initializeApp() {
 
         // Search Inventory Listener
         const searchInventoryInput = document.getElementById('searchInventory');
-        const debouncedLoadInventory = debounce(() => loadInventory(), 250);
+        const debouncedLoadInventory = debounce(() => loadInventory(), 100);
         if (searchInventoryInput) {
             searchInventoryInput.addEventListener('input', (e) => {
                 inventoryFilter.search = e.target.value;
