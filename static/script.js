@@ -2,6 +2,49 @@
  * Custom Autocomplete Component
  * Replaces native datalists for better reliability and UX
  */
+
+/**
+ * Utility: Debounce function to limit execution frequency
+ */
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+/**
+ * Utility: Render pagination controls
+ */
+function renderPagination(containerId, currentPage, totalPages, callbackName) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    if (totalPages <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+
+    container.innerHTML = `
+        <div class="pagination" style="display: flex; justify-content: center; align-items: center; gap: 1rem; margin-top: 1rem;">
+            <button class="action-btn" ${currentPage === 1 ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''} 
+                    onclick="${callbackName}(${currentPage - 1})">
+                <i class="fas fa-chevron-left"></i> Prev
+            </button>
+            <span style="font-weight: 600; color: var(--text-secondary);">Page ${currentPage} of ${totalPages}</span>
+            <button class="action-btn" ${currentPage === totalPages ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''} 
+                    onclick="${callbackName}(${currentPage + 1})">
+                Next <i class="fas fa-chevron-right"></i>
+            </button>
+        </div>
+    `;
+}
+
 class Autocomplete {
     constructor(input, dataCallback) {
         this.input = input;
@@ -18,8 +61,9 @@ class Autocomplete {
             this.wrapper.appendChild(this.list);
         }
         
-        // Events
-        this.input.addEventListener('input', () => this.onInput());
+        // Events (Debounced for performance)
+        const debouncedInput = debounce(() => this.onInput(), 300);
+        this.input.addEventListener('input', debouncedInput);
         this.input.addEventListener('focus', () => this.onInput());
         this.input.addEventListener('keydown', (e) => this.onKeyDown(e));
         
@@ -727,7 +771,8 @@ function initializeApp() {
         });
 
         // Fetch initial data
-        fetch('/api/inventory').then(r => r.json()).then(products => {
+        fetch('/api/inventory').then(r => r.json()).then(data => {
+            const products = data.products || [];
             if (Array.isArray(products)) {
                 window.inventoryItemNames = products.map(p => p.name);
                 const itemNameInput = document.getElementById('itemName');
@@ -737,14 +782,27 @@ function initializeApp() {
             }
         });
 
+        // Search Inventory Listener
+        const searchInventoryInput = document.getElementById('searchInventory');
+        const debouncedLoadInventory = debounce(() => loadInventory(), 250);
+        if (searchInventoryInput) {
+            searchInventoryInput.addEventListener('input', (e) => {
+                inventoryFilter.search = e.target.value;
+                inventoryFilter.page = 1;
+                debouncedLoadInventory();
+            });
+        }
+
         // --- ADMIN LISTENERS ---
-        document.getElementById('searchUsers')?.addEventListener('keyup', () => {
+        const debouncedUserSearch = debounce(() => {
             const searchTerm = document.getElementById('searchUsers').value.toLowerCase();
             document.querySelectorAll('#usersTable tr').forEach(row => {
                 const text = row.textContent.toLowerCase();
                 row.style.display = text.includes(searchTerm) ? '' : 'none';
             });
-        });
+        }, 300);
+
+        document.getElementById('searchUsers')?.addEventListener('keyup', debouncedUserSearch);
 
         document.getElementById('addUserForm')?.addEventListener('submit', handleAddUserSubmit);
         document.getElementById('editUserForm')?.addEventListener('submit', handleEditUserSubmit);
@@ -1118,19 +1176,37 @@ function renderRecentTransactions(transactions) {
     }
 }
 
-async function loadInventory() {
+let currentSalesPage = 1;
+
+// Global Filter States
+let inventoryFilter = {
+    page: 1,
+    lowStockOnly: false,
+    search: ''
+};
+let inventoryAbortController = null;
+
+async function loadInventory(page = inventoryFilter.page) {
+    if (inventoryAbortController) inventoryAbortController.abort();
+    inventoryAbortController = new AbortController();
+    const signal = inventoryAbortController.signal;
+    inventoryFilter.page = page;
+    const { lowStockOnly, search } = inventoryFilter;
+    
     try {
-        const response = await fetch('/api/inventory');
-        const products = await response.json();
+        const url = `/api/inventory?page=${page}&per_page=50&low_stock=${lowStockOnly}&search=${encodeURIComponent(search)}`;
+        const response = await fetch(url, { signal });
+        const data = await response.json();
         
+        const products = data.products || [];
         const table = document.getElementById('inventoryTable');
         if (!table) return;
 
         table.innerHTML = products.map((p, i) => {
             const isLow = p.quantity <= p.reorder_level;
             return `
-                <tr>
-                    <td>${i + 1}</td>
+                <tr class="${isLow ? 'low-stock-row' : ''}">
+                    <td>${(inventoryFilter.page - 1) * 50 + i + 1}</td>
                     <td><strong>${p.name}</strong></td>
                     <td>${p.brand || '-'}</td>
                     <td>${p.quantity}</td>
@@ -1149,11 +1225,36 @@ async function loadInventory() {
         }).join('');
 
         if (products.length === 0) {
-            table.innerHTML = '<tr><td colspan="9" style="text-align:center;">No items in inventory</td></tr>';
+            table.innerHTML = '<tr><td colspan="9" style="text-align:center;">No items matching filters</td></tr>';
         }
+
+        renderPagination('inventoryPagination', data.page, data.total_pages, 'loadInventory');
     } catch (error) {
+        if (error.name === 'AbortError') return;
         console.error('Error loading inventory:', error);
     }
+}
+
+function toggleLowStockFilter() {
+    // Synchronize search state immediately to avoid conflicts
+    const searchInput = document.getElementById('searchInventory');
+    if (searchInput) inventoryFilter.search = searchInput.value;
+
+    inventoryFilter.lowStockOnly = !inventoryFilter.lowStockOnly;
+    inventoryFilter.page = 1;
+    
+    const btn = document.querySelector('button[onclick="toggleLowStockFilter()"]');
+    const text = document.getElementById('lowStockFilterText');
+    
+    if (inventoryFilter.lowStockOnly) {
+        btn.classList.add('active-filter');
+        if (text) text.textContent = 'Showing Low Stock';
+    } else {
+        btn.classList.remove('active-filter');
+        if (text) text.textContent = 'Show Only Low Stock';
+    }
+    
+    loadInventory();
 }
 
 async function loadTransactions() {
@@ -1258,7 +1359,7 @@ async function loadInvoices() {
             statusFilter.onchange = filterInvoices;
         }
         if (searchInput) {
-            searchInput.oninput = filterInvoices;
+            searchInput.oninput = debounce(filterInvoices, 300);
         }
     } catch (err) {
         console.error('Error loading invoices:', err);
@@ -2298,13 +2399,15 @@ async function handleSaleSubmit(e) {
 }
 
 
-async function loadSalesHistory(dateFilter = '', customerFilter = '') {
+currentSalesPage = 1;
+async function loadSalesHistory(dateFilter = '', customerFilter = '', page = 1) {
+    currentSalesPage = page;
     try {
-        let url = `/api/sales?date=${dateFilter || ''}&customer=${customerFilter || ''}`;
+        let url = `/api/sales?date=${dateFilter || ''}&customer=${customerFilter || ''}&page=${page}&per_page=50`;
 
         const response = await fetch(url);
-        const salesData = await response.json();
-        const sales = Array.isArray(salesData) ? salesData : [];
+        const data = await response.json();
+        const sales = data.sales || [];
 
         // Cache sales data
         await saveToIndexedDB('sales', sales);
@@ -2317,7 +2420,7 @@ async function loadSalesHistory(dateFilter = '', customerFilter = '') {
             const statusColor = status.toLowerCase();
             return `
                 <tr>
-                    <td>${index + 1}</td>
+                    <td>${(currentSalesPage - 1) * 50 + index + 1}</td>
                     <td><strong>${sale.sale_num}</strong></td>
                     <td>${sale.customer || 'Unknown'}</td>
                     <td>${sale.date}</td>
@@ -2362,6 +2465,8 @@ async function loadSalesHistory(dateFilter = '', customerFilter = '') {
                 `;
             }).join('') || '<tr><td colspan="7" style="text-align:center;">No recent sales</td></tr>';
         }
+
+        renderPagination('salesPagination', data.page, data.total_pages, 'loadSalesHistoryWrapper');
     } catch (error) {
         console.error('Error loading sales:', error);
         // Load from cache on error
@@ -2398,6 +2503,15 @@ async function loadSalesHistory(dateFilter = '', customerFilter = '') {
             table.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--text-secondary);">No cached sales available</td></tr>';
         }
     }
+}
+
+/**
+ * Pagination Wrapper for Sales History
+ */
+function loadSalesHistoryWrapper(page) {
+    const date = document.getElementById('salesHistoryDate')?.value || '';
+    const customer = document.getElementById('searchCustomer')?.value.trim() || '';
+    loadSalesHistory(date, customer, page);
 }
 
 async function loadSalesRecords() {
@@ -2711,13 +2825,13 @@ function renderCustomers(customers) {
     // Setup search
     const searchInput = document.getElementById('searchCustomers');
     if (searchInput) {
-        searchInput.onkeyup = () => {
+        searchInput.onkeyup = debounce(() => {
             const searchTerm = searchInput.value.toLowerCase();
             document.querySelectorAll('#customersTable tr').forEach(row => {
                 const text = row.textContent.toLowerCase();
                 row.style.display = text.includes(searchTerm) ? '' : 'none';
             });
-        };
+        }, 300);
     }
 }
 

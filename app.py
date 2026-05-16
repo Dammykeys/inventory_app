@@ -230,7 +230,11 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses (date)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products (name)")
-        
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales (customer)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sales_payment_status ON sales (payment_status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_sale_items_sale_num ON sale_items (sale_num)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_item_name ON transactions (item_name)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_activity_log_timestamp ON activity_log (timestamp)")
         conn.commit()
         print("Database schema initialized successfully.")
     except Exception as e:
@@ -241,12 +245,17 @@ def init_db():
         if conn:
             release_db_connection(conn)
 
-# Safely run init_db
-with app.app_context():
-    try:
-        init_db()
-    except Exception as e:
-        print(f"Safe init_db failed: {e}")
+        # Enable trigram extension for fast text search if using Postgres
+        try:
+            cursor.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_products_name_trgm ON products USING gin (name gin_trgm_ops)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_products_brand_trgm ON products USING gin (brand gin_trgm_ops)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_sales_customer_trgm ON sales USING gin (customer gin_trgm_ops)")
+        except Exception as e:
+            print(f"Trigram index error: {e}")
+            conn.rollback()
+
+        conn.commit()
 
 # --- AUTHENTICATION HELPERS ---
 def login_required(f):
@@ -255,7 +264,7 @@ def login_required(f):
         if 'user_id' not in session:
             if request.path.startswith('/api/'):
                 return jsonify({'success': False, 'error': 'Authentication required'}), 401
-            return redirect(url_for('login'))
+            return redirect(url_for('login_page'))
         return f(*args, **kwargs)
     return decorated_function
 
@@ -265,7 +274,7 @@ def admin_required(f):
         if 'user_id' not in session:
             if request.path.startswith('/api/'):
                 return jsonify({'success': False, 'error': 'Authentication required'}), 401
-            return redirect(url_for('login'))
+            return redirect(url_for('login_page'))
         
         conn = None
         try:
@@ -498,12 +507,42 @@ def get_dashboard_combined():
 @app.route('/api/inventory')
 @login_required
 def get_inventory():
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 50, type=int)
+    low_stock_only = request.args.get('low_stock', 'false').lower() == 'true'
+    search_query = request.args.get('search', '').strip()
+    offset = (page - 1) * per_page
+    
     conn = get_db_connection()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute("SELECT * FROM products ORDER BY LOWER(name) ASC")
+        
+        base_query = "FROM products WHERE 1=1"
+        params = []
+        
+        if low_stock_only:
+            base_query += " AND quantity <= reorder_level"
+        
+        if search_query:
+            base_query += " AND (name ILIKE %s OR brand ILIKE %s)"
+            params.extend([f'%{search_query}%', f'%{search_query}%'])
+        
+        # Get total count
+        cursor.execute(f"SELECT COUNT(*) {base_query}", params)
+        total_count = cursor.fetchone()['count']
+        
+        # Get paginated data
+        cursor.execute(f"SELECT * {base_query} ORDER BY LOWER(name) ASC LIMIT %s OFFSET %s", params + [per_page, offset])
         products = cursor.fetchall()
-        return jsonify(products)
+        
+        return jsonify({
+            'success': True,
+            'products': products,
+            'total_count': total_count,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': (total_count + per_page - 1) // per_page
+        })
     except Exception as e:
         import traceback
         print(f"Inventory Error: {e}")
@@ -965,22 +1004,43 @@ def create_sale():
 def get_sales():
     customer_filter = request.args.get('customer', '').strip()
     date_filter = request.args.get('date', '').strip()
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 50, type=int)
+    offset = (page - 1) * per_page
     
     conn = get_db_connection()
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-        if customer_filter and date_filter:
-            cursor.execute("SELECT * FROM sales WHERE customer LIKE %s AND date=%s ORDER BY date DESC, time DESC", (f'%{customer_filter}%', date_filter))
-        elif date_filter:
-            cursor.execute("SELECT * FROM sales WHERE date=%s ORDER BY date DESC, time DESC", (date_filter,))
-        elif customer_filter:
-            cursor.execute("SELECT * FROM sales WHERE customer LIKE %s ORDER BY date DESC, time DESC", (f'%{customer_filter}%',))
-        else:
-            cursor.execute("SELECT * FROM sales ORDER BY date DESC, time DESC LIMIT 100")
+        query = "SELECT * FROM sales WHERE 1=1"
+        params = []
         
-        sales = [dict(row) for row in cursor.fetchall()]
-        return jsonify(sales)
+        if customer_filter:
+            query += " AND customer LIKE %s"
+            params.append(f'%{customer_filter}%')
+        if date_filter:
+            query += " AND date = %s"
+            params.append(date_filter)
+            
+        # Get total count
+        count_query = query.replace("SELECT *", "SELECT COUNT(*)")
+        cursor.execute(count_query, params)
+        total_count = cursor.fetchone()['count']
+        
+        # Get paginated data
+        query += " ORDER BY date DESC, time DESC LIMIT %s OFFSET %s"
+        params.extend([per_page, offset])
+        cursor.execute(query, params)
+        sales = cursor.fetchall()
+        
+        return jsonify({
+            'success': True,
+            'sales': sales,
+            'total_count': total_count,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': (total_count + per_page - 1) // per_page
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
