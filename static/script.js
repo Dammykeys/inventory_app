@@ -1269,11 +1269,11 @@ async function loadTransactions() {
             <tr>
                 <td>${i + 1}</td>
                 <td>${t.date}</td>
+                <td>${t.time}</td>
                 <td><strong>${t.item_name}</strong></td>
                 <td>${t.quantity}</td>
-                <td><span class="status-badge ${t.type === 'Addition' ? 'healthy' : 'warning'}">${t.type}</span></td>
-                <td>${t.reason || '-'}</td>
-                <td>${t.user_id}</td>
+                <td><span class="status-badge ${t.type === 'Intake' || t.type === 'Addition' ? 'healthy' : 'warning'}">${t.type}</span></td>
+                <td>${t.performed_by || '-'}</td>
                 <td>
                     <button class="action-btn delete" onclick="confirmDelete(${t.id}, 'transaction', '${t.item_name}')">
                         <i class="fas fa-trash"></i>
